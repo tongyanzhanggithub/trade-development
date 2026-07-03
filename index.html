@@ -1,0 +1,622 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>自动化外贸开发系统</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <svg class="icon-sprite" aria-hidden="true">
+      <symbol id="icon-rocket" viewBox="0 0 24 24">
+        <path d="M4.5 16.5 3 21l4.5-1.5" />
+        <path d="M9 15 5 19" />
+        <path d="M14 4c3.5-1.5 6-1 6-1s.5 2.5-1 6c-1.7 4-5.2 7.2-9.8 8.8L6.2 14.8C7.8 10.2 10 5.7 14 4Z" />
+        <path d="M15 9h.01" />
+      </symbol>
+      <symbol id="icon-search" viewBox="0 0 24 24">
+        <circle cx="11" cy="11" r="7" />
+        <path d="m20 20-3.5-3.5" />
+      </symbol>
+      <symbol id="icon-users" viewBox="0 0 24 24">
+        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+        <circle cx="9" cy="7" r="4" />
+        <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+      </symbol>
+      <symbol id="icon-mail" viewBox="0 0 24 24">
+        <path d="M4 6h16v12H4z" />
+        <path d="m4 7 8 6 8-6" />
+      </symbol>
+      <symbol id="icon-message" viewBox="0 0 24 24">
+        <path d="M21 12a8.5 8.5 0 0 1-12.4 7.6L3 21l1.5-5.2A8.5 8.5 0 1 1 21 12Z" />
+        <path d="M8 10h8M8 14h5" />
+      </symbol>
+      <symbol id="icon-zap" viewBox="0 0 24 24">
+        <path d="M13 2 3 14h8l-1 8 10-12h-8l1-8Z" />
+      </symbol>
+      <symbol id="icon-settings" viewBox="0 0 24 24">
+        <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
+        <path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.8 1.8 0 0 0 15 19.4a1.8 1.8 0 0 0-1 .6 1.8 1.8 0 0 0-.5 1.3V21a2 2 0 1 1-4 0v-.09A1.8 1.8 0 0 0 8 19.4a1.8 1.8 0 0 0-1.98.36l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.8 1.8 0 0 0 3.6 15a1.8 1.8 0 0 0-.6-1 1.8 1.8 0 0 0-1.3-.5H1.6a2 2 0 1 1 0-4h.09A1.8 1.8 0 0 0 3.6 8a1.8 1.8 0 0 0-.36-1.98l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.8 1.8 0 0 0 8 3.6a1.8 1.8 0 0 0 1-.6 1.8 1.8 0 0 0 .5-1.3V1.6a2 2 0 1 1 4 0v.09A1.8 1.8 0 0 0 15 3.6a1.8 1.8 0 0 0 1.98-.36l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.8 1.8 0 0 0 19.4 8c.18.37.4.7.6 1a1.8 1.8 0 0 0 1.3.5h.1a2 2 0 1 1 0 4h-.09a1.8 1.8 0 0 0-1.3.5 1.8 1.8 0 0 0-.61 1Z" />
+      </symbol>
+      <symbol id="icon-briefcase" viewBox="0 0 24 24">
+        <path d="M10 6V5a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v1" />
+        <rect x="3" y="6" width="18" height="14" rx="2" />
+        <path d="M3 12h18" />
+        <path d="M9 12v2h6v-2" />
+      </symbol>
+      <symbol id="icon-play" viewBox="0 0 24 24">
+        <path d="m8 5 11 7-11 7V5Z" />
+      </symbol>
+      <symbol id="icon-copy" viewBox="0 0 24 24">
+        <rect x="8" y="8" width="11" height="11" rx="2" />
+        <path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" />
+      </symbol>
+      <symbol id="icon-download" viewBox="0 0 24 24">
+        <path d="M12 4v11" />
+        <path d="m7 10 5 5 5-5" />
+        <path d="M5 20h14" />
+      </symbol>
+      <symbol id="icon-check" viewBox="0 0 24 24">
+        <path d="m5 12 4 4L19 6" />
+      </symbol>
+      <symbol id="icon-link" viewBox="0 0 24 24">
+        <path d="M10 13a5 5 0 0 0 7.07 0l2.12-2.12a5 5 0 0 0-7.07-7.07L11 4.93" />
+        <path d="M14 11a5 5 0 0 0-7.07 0L4.8 13.12a5 5 0 0 0 7.07 7.07L13 19.07" />
+      </symbol>
+    </svg>
+
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="主导航">
+        <div class="brand">
+          <span class="brand-mark">AUTO</span>
+          <div>
+            <strong>外贸自动开发</strong>
+            <span>获客流水线</span>
+          </div>
+        </div>
+        <nav class="nav-tabs">
+          <button class="nav-tab is-active" data-view="dashboard" type="button">
+            <svg><use href="#icon-rocket" /></svg>
+            <span>控制台</span>
+          </button>
+          <button class="nav-tab" data-view="discovery" type="button">
+            <svg><use href="#icon-search" /></svg>
+            <span>搜索</span>
+          </button>
+          <button class="nav-tab" data-view="prospects" type="button">
+            <svg><use href="#icon-users" /></svg>
+            <span>潜客</span>
+          </button>
+          <button class="nav-tab" data-view="email" type="button">
+            <svg><use href="#icon-mail" /></svg>
+            <span>邮件</span>
+          </button>
+          <button class="nav-tab" data-view="whatsapp" type="button">
+            <svg><use href="#icon-message" /></svg>
+            <span>WhatsApp</span>
+          </button>
+          <button class="nav-tab" data-view="automation" type="button">
+            <svg><use href="#icon-zap" /></svg>
+            <span>队列</span>
+          </button>
+          <button class="nav-tab" data-view="management" type="button">
+            <svg><use href="#icon-briefcase" /></svg>
+            <span>管理</span>
+          </button>
+          <button class="nav-tab" data-view="settings" type="button">
+            <svg><use href="#icon-settings" /></svg>
+            <span>设置</span>
+          </button>
+        </nav>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Automated outbound pipeline</p>
+            <h1>自动化外贸开发系统</h1>
+          </div>
+          <div class="topbar-actions">
+            <button class="icon-button" id="exportJson" type="button" aria-label="导出全部数据" title="导出全部数据">
+              <svg><use href="#icon-download" /></svg>
+            </button>
+            <button class="primary-button" id="runAutomationTop" type="button">
+              <svg><use href="#icon-play" /></svg>
+              <span>运行自动化</span>
+            </button>
+          </div>
+        </header>
+
+        <section class="view is-active" id="dashboardView" aria-labelledby="dashboardTitle">
+          <h2 id="dashboardTitle" class="sr-only">控制台</h2>
+          <div class="command-grid">
+            <form class="panel campaign-form" id="campaignForm">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Campaign</p>
+                  <h2>开发活动</h2>
+                </div>
+                <span class="status-pill" id="campaignStatus">本地模式</span>
+              </div>
+              <div class="form-grid">
+                <label>
+                  <span>产品</span>
+                  <input id="productInput" name="product" required />
+                </label>
+                <label>
+                  <span>目标市场</span>
+                  <input id="marketsInput" name="markets" required />
+                </label>
+                <label>
+                  <span>客户类型</span>
+                  <select id="customerTypeInput" name="customerType">
+                    <option value="importer distributor">进口商 / 经销商</option>
+                    <option value="retailer chain buyer">零售连锁 / 采购</option>
+                    <option value="brand private label">品牌商 / 贴牌</option>
+                    <option value="wholesaler">批发商</option>
+                    <option value="contractor project buyer">工程商 / 项目采购</option>
+                  </select>
+                </label>
+                <label>
+                  <span>每日上限</span>
+                  <input id="dailyLimitInput" name="dailyLimit" type="number" min="1" max="300" />
+                </label>
+              </div>
+              <label>
+                <span>卖点</span>
+                <textarea id="valuePropsInput" name="valueProps" rows="3"></textarea>
+              </label>
+              <div class="form-grid">
+                <label>
+                  <span>认证/条件</span>
+                  <input id="certificationsInput" name="certifications" />
+                </label>
+                <label>
+                  <span>署名</span>
+                  <input id="senderInput" name="senderName" />
+                </label>
+              </div>
+              <label>
+                <span>公司名</span>
+                <input id="companyInput" name="companyName" />
+              </label>
+              <div class="button-row">
+                <button class="primary-button" id="generatePlan" type="submit">
+                  <svg><use href="#icon-zap" /></svg>
+                  <span>生成开发计划</span>
+                </button>
+                <button class="ghost-button" id="resetDemo" type="button">重置示例</button>
+              </div>
+            </form>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Metrics</p>
+                  <h2>自动化进度</h2>
+                </div>
+              </div>
+              <div class="metric-grid" id="metricGrid"></div>
+              <div class="workflow" id="workflowSteps"></div>
+            </section>
+          </div>
+
+          <div class="dashboard-grid">
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Discovery plan</p>
+                  <h2>搜索策略</h2>
+                </div>
+                <button class="icon-button" id="copyQueries" type="button" aria-label="复制搜索式" title="复制搜索式">
+                  <svg><use href="#icon-copy" /></svg>
+                </button>
+              </div>
+              <div class="query-list compact" id="queryPreview"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Best prospects</p>
+                  <h2>高分潜客</h2>
+                </div>
+              </div>
+              <div class="mini-prospect-list" id="topProspects"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="discoveryView" aria-labelledby="discoveryTitle">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Search automation</p>
+              <h2 id="discoveryTitle">搜索与采集</h2>
+            </div>
+            <div class="topbar-actions">
+              <button class="ghost-button" id="runDiscovery" type="button">
+                <svg><use href="#icon-search" /></svg>
+                <span>生成搜索式</span>
+              </button>
+              <button class="primary-button" id="createProspects" type="button">
+                <svg><use href="#icon-users" /></svg>
+                <span>生成潜客队列</span>
+              </button>
+            </div>
+          </div>
+          <section class="panel">
+            <div class="query-toolbar">
+              <label class="search-box">
+                <svg><use href="#icon-search" /></svg>
+                <input id="queryFilter" type="search" placeholder="过滤渠道或关键词" />
+              </label>
+              <button class="icon-button" id="exportQueries" type="button" aria-label="导出搜索式" title="导出搜索式">
+                <svg><use href="#icon-download" /></svg>
+              </button>
+            </div>
+            <div class="query-list" id="queryList"></div>
+          </section>
+        </section>
+
+        <section class="view" id="prospectsView" aria-labelledby="prospectsTitle">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Prospect engine</p>
+              <h2 id="prospectsTitle">潜客队列</h2>
+            </div>
+            <div class="topbar-actions">
+              <button class="ghost-button" id="enrichProspects" type="button">
+                <svg><use href="#icon-link" /></svg>
+                <span>补全资料</span>
+              </button>
+              <button class="ghost-button" id="verifyProspects" type="button">
+                <svg><use href="#icon-check" /></svg>
+                <span>验证邮箱</span>
+              </button>
+              <button class="ghost-button" id="buildWhatsappProspects" type="button">
+                <svg><use href="#icon-message" /></svg>
+                <span>生成 WhatsApp</span>
+              </button>
+              <button class="primary-button" id="exportProspects" type="button">
+                <svg><use href="#icon-download" /></svg>
+                <span>导出 CSV</span>
+              </button>
+            </div>
+          </div>
+          <div class="prospect-layout">
+            <section class="panel table-panel">
+              <div class="query-toolbar">
+                <label class="search-box">
+                  <svg><use href="#icon-search" /></svg>
+                  <input id="prospectFilter" type="search" placeholder="搜索公司、市场、来源" />
+                </label>
+                <select id="statusFilter" aria-label="状态筛选">
+                  <option value="all">全部状态</option>
+                  <option value="新发现">新发现</option>
+                  <option value="已丰富">已丰富</option>
+                  <option value="邮箱有效">邮箱有效</option>
+                  <option value="待发信">待发信</option>
+                  <option value="已入队">已入队</option>
+                </select>
+              </div>
+              <div class="prospect-table" id="prospectTable"></div>
+            </section>
+            <section class="panel detail-panel" id="prospectDetail"></section>
+          </div>
+        </section>
+
+        <section class="view" id="emailView" aria-labelledby="emailTitle">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Email sequence</p>
+              <h2 id="emailTitle">开发信序列</h2>
+            </div>
+            <div class="topbar-actions">
+              <select id="emailProspectSelect" aria-label="选择潜客"></select>
+              <button class="ghost-button" id="regenerateEmail" type="button">
+                <svg><use href="#icon-mail" /></svg>
+                <span>重写序列</span>
+              </button>
+              <button class="primary-button" id="queueSequence" type="button">
+                <svg><use href="#icon-zap" /></svg>
+                <span>加入队列</span>
+              </button>
+            </div>
+          </div>
+          <div class="sequence-grid" id="sequenceGrid"></div>
+        </section>
+
+        <section class="view" id="whatsappView" aria-labelledby="whatsappTitle">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">WhatsApp outreach</p>
+              <h2 id="whatsappTitle">WhatsApp 开发</h2>
+            </div>
+            <div class="topbar-actions">
+              <select id="whatsappProspectSelect" aria-label="选择潜客"></select>
+              <button class="ghost-button" id="regenerateWhatsapp" type="button">
+                <svg><use href="#icon-message" /></svg>
+                <span>重写话术</span>
+              </button>
+              <button class="primary-button" id="queueWhatsapp" type="button">
+                <svg><use href="#icon-zap" /></svg>
+                <span>加入 WhatsApp 队列</span>
+              </button>
+            </div>
+          </div>
+          <div class="whatsapp-note">
+            WhatsApp 更适合已授权、询盘、展会名片或已有业务关系的客户。冷启动建议先用邮件/LinkedIn 建立上下文，避免账号风控。
+          </div>
+          <div class="sequence-grid" id="whatsappSequenceGrid"></div>
+        </section>
+
+        <section class="view" id="automationView" aria-labelledby="automationTitle">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Outbox and follow-up</p>
+              <h2 id="automationTitle">发信与跟进队列</h2>
+            </div>
+            <div class="topbar-actions">
+              <button class="ghost-button" id="simulateSend" type="button">
+                <svg><use href="#icon-play" /></svg>
+                <span>模拟发送</span>
+              </button>
+              <button class="primary-button" id="scheduleFollowups" type="button">
+                <svg><use href="#icon-check" /></svg>
+                <span>生成跟进</span>
+              </button>
+            </div>
+          </div>
+          <div class="automation-grid">
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Outbox</p>
+                  <h2>发信队列</h2>
+                </div>
+                <button class="icon-button" id="exportOutbox" type="button" aria-label="导出发信队列" title="导出发信队列">
+                  <svg><use href="#icon-download" /></svg>
+                </button>
+              </div>
+              <div class="outbox-list" id="outboxList"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Tasks</p>
+                  <h2>跟进任务</h2>
+                </div>
+              </div>
+              <div class="task-list" id="taskList"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">WhatsApp</p>
+                  <h2>WhatsApp 队列</h2>
+                </div>
+                <button class="icon-button" id="exportWhatsappQueue" type="button" aria-label="导出 WhatsApp 队列" title="导出 WhatsApp 队列">
+                  <svg><use href="#icon-download" /></svg>
+                </button>
+              </div>
+              <div class="outbox-list" id="whatsappQueueList"></div>
+            </section>
+          </div>
+          <section class="panel log-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Run log</p>
+                <h2>自动化日志</h2>
+              </div>
+            </div>
+            <div class="run-log" id="runLog"></div>
+          </section>
+        </section>
+
+        <section class="view" id="managementView" aria-labelledby="managementTitle">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Management system</p>
+              <h2 id="managementTitle">运营管理后台</h2>
+            </div>
+            <div class="topbar-actions">
+              <button class="ghost-button" id="saveCampaignSnapshot" type="button">
+                <svg><use href="#icon-check" /></svg>
+                <span>保存当前活动</span>
+              </button>
+              <button class="ghost-button" id="runManagementJobs" type="button">
+                <svg><use href="#icon-play" /></svg>
+                <span>运行待执行</span>
+              </button>
+              <button class="primary-button" id="exportManagement" type="button">
+                <svg><use href="#icon-download" /></svg>
+                <span>导出管理数据</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="management-kpis" id="managementKpis"></div>
+
+          <div class="management-grid">
+            <section class="panel management-panel wide-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Campaigns</p>
+                  <h2>活动管理</h2>
+                </div>
+                <button class="ghost-button" id="newManagedCampaign" type="button">
+                  <svg><use href="#icon-rocket" /></svg>
+                  <span>新建活动</span>
+                </button>
+              </div>
+              <div class="management-table" id="campaignManager"></div>
+            </section>
+
+            <section class="panel management-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Jobs</p>
+                  <h2>自动化任务中心</h2>
+                </div>
+                <button class="icon-button" id="resetJobs" type="button" aria-label="重置任务" title="重置任务">
+                  <svg><use href="#icon-zap" /></svg>
+                </button>
+              </div>
+              <div class="job-board" id="jobBoard"></div>
+            </section>
+
+            <section class="panel management-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Approvals</p>
+                  <h2>审批中心</h2>
+                </div>
+                <button class="ghost-button" id="approveAll" type="button">
+                  <svg><use href="#icon-check" /></svg>
+                  <span>全部通过</span>
+                </button>
+              </div>
+              <div class="approval-list" id="approvalCenter"></div>
+            </section>
+
+            <section class="panel management-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Accounts</p>
+                  <h2>渠道账号</h2>
+                </div>
+              </div>
+              <div class="account-list" id="accountManager"></div>
+            </section>
+
+            <section class="panel management-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Rules</p>
+                  <h2>自动化规则</h2>
+                </div>
+                <button class="primary-button" id="saveRules" type="button">
+                  <svg><use href="#icon-check" /></svg>
+                  <span>保存规则</span>
+                </button>
+              </div>
+              <div class="rules-grid">
+                <label>
+                  <span>邮件日上限</span>
+                  <input id="ruleEmailLimit" type="number" min="1" max="500" />
+                </label>
+                <label>
+                  <span>WhatsApp 日上限</span>
+                  <input id="ruleWhatsappLimit" type="number" min="1" max="200" />
+                </label>
+                <label>
+                  <span>最低线索评分</span>
+                  <input id="ruleScoreThreshold" type="number" min="0" max="100" />
+                </label>
+                <label>
+                  <span>冷却天数</span>
+                  <input id="ruleCooldownDays" type="number" min="1" max="60" />
+                </label>
+                <label class="toggle-row">
+                  <input id="ruleRequireApproval" type="checkbox" />
+                  <span>WhatsApp 发送前必须审批</span>
+                </label>
+              </div>
+            </section>
+
+            <section class="panel management-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Pipeline</p>
+                  <h2>线索阶段漏斗</h2>
+                </div>
+              </div>
+              <div class="pipeline-manager" id="pipelineManager"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="settingsView" aria-labelledby="settingsTitle">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Connectors</p>
+              <h2 id="settingsTitle">自动化接口</h2>
+            </div>
+            <button class="primary-button" id="saveSettings" type="button">
+              <svg><use href="#icon-check" /></svg>
+              <span>保存设置</span>
+            </button>
+          </div>
+          <div class="settings-grid">
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Mode</p>
+                  <h2>运行模式</h2>
+                </div>
+              </div>
+              <div class="segmented" role="group" aria-label="运行模式">
+                <button class="segment is-active" id="localMode" data-mode="local" type="button">本地模拟</button>
+                <button class="segment" id="webhookMode" data-mode="webhook" type="button">Webhook</button>
+              </div>
+            </section>
+            <section class="panel connector-panel">
+              <label>
+                <span>搜索采集 Webhook</span>
+                <input id="searchWebhook" placeholder="https://..." />
+              </label>
+              <label>
+                <span>邮箱查找/验证 Webhook</span>
+                <input id="enrichWebhook" placeholder="https://..." />
+              </label>
+              <label>
+                <span>发信 Webhook / SMTP 服务</span>
+                <input id="sendWebhook" placeholder="https://..." />
+              </label>
+              <label>
+                <span>WhatsApp Business Webhook</span>
+                <input id="whatsappWebhook" placeholder="https://..." />
+              </label>
+              <label>
+                <span>CRM 同步 Webhook</span>
+                <input id="crmWebhook" placeholder="https://..." />
+              </label>
+            </section>
+            <section class="panel connector-panel">
+              <label>
+                <span>搜索工具</span>
+                <select id="searchProvider">
+                  <option>Google Custom Search / SerpAPI</option>
+                  <option>Bing Search API</option>
+                  <option>Apify Actor</option>
+                  <option>n8n Workflow</option>
+                  <option>Activepieces Flow</option>
+                </select>
+              </label>
+              <label>
+                <span>邮箱工具</span>
+                <select id="emailProvider">
+                  <option>Hunter / Apollo / Dropcontact</option>
+                  <option>ZeroBounce / NeverBounce</option>
+                  <option>自有邮箱规则</option>
+                  <option>n8n SMTP</option>
+                </select>
+              </label>
+              <label>
+                <span>CRM</span>
+                <select id="crmProvider">
+                  <option>Twenty / Wukong CRM</option>
+                  <option>EspoCRM</option>
+                  <option>HubSpot</option>
+                  <option>自定义 Webhook</option>
+                </select>
+              </label>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="./app.js" defer></script>
+  </body>
+</html>

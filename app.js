@@ -4026,8 +4026,12 @@ function download(filename, content, type) {
 
 async function copyText(text) {
   if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // 权限被拒或非安全上下文，降级到 execCommand
+    }
   }
 
   const textarea = document.createElement("textarea");

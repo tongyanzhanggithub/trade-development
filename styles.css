@@ -1251,6 +1251,15 @@ button.management-row.is-selected {
   font-weight: 700;
 }
 
+.timeline-item.cancelled {
+  opacity: 0.55;
+}
+
+.timeline-item.cancelled .tl-body {
+  text-decoration: line-through;
+  text-decoration-color: rgba(31, 35, 40, 0.35);
+}
+
 .timeline-actions {
   display: flex;
   gap: 8px;
@@ -1942,4 +1951,230 @@ button.management-row.is-selected {
 @keyframes autopilot-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
+}
+
+/* ---------- UI/UX 优化：导航分组 + 徽标 ---------- */
+.nav-group-label {
+  margin: 12px 8px 2px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.38);
+}
+
+.nav-tab {
+  position: relative;
+}
+
+.nav-tab.is-active {
+  box-shadow: inset 3px 0 0 var(--teal);
+}
+
+.nav-badge {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  display: grid;
+  place-items: center;
+  border-radius: 99px;
+  background: var(--red);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+/* ---------- Toast 即时反馈 ---------- */
+.toast-stack {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 999;
+  display: grid;
+  gap: 8px;
+  max-width: min(380px, calc(100vw - 36px));
+}
+
+.toast {
+  padding: 10px 14px;
+  border-radius: 8px;
+  border-left: 3px solid var(--teal);
+  background: #1f2926;
+  color: #f2f5f3;
+  font-size: 13px;
+  line-height: 1.45;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+  animation: toast-in 0.25s ease;
+}
+
+.toast.warn {
+  border-left-color: #ff8a5c;
+}
+
+.toast.auto {
+  border-left-color: #7dd3c8;
+}
+
+.toast.hide {
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(10px); }
+}
+
+/* ---------- 新手引导清单 ---------- */
+.checklist-panel {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border: 1px solid #bfe0d9;
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, #f0f9f6, #ffffff);
+  box-shadow: var(--shadow);
+}
+
+.checklist-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.checklist-dismiss {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.checklist-dismiss:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+.checklist-steps {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.checklist-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  cursor: pointer;
+  text-align: left;
+}
+
+.checklist-step:hover {
+  border-color: var(--teal);
+  transform: translateY(-1px);
+}
+
+.checklist-step .step-dot {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 99px;
+  background: #eef1ef;
+  color: var(--muted);
+  font-weight: 900;
+  font-size: 12px;
+}
+
+.checklist-step.done {
+  opacity: 0.75;
+}
+
+.checklist-step.done .step-dot {
+  background: #e6f4ea;
+  color: var(--green);
+}
+
+.checklist-step .step-text strong {
+  display: block;
+  font-size: 13px;
+}
+
+.checklist-step .step-text small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* ---------- 交互顺滑度 ---------- */
+.view.is-active {
+  animation: view-in 0.22s ease;
+}
+
+@keyframes view-in {
+  from { opacity: 0; transform: translateY(6px); }
+}
+
+.nav-tab,
+.primary-button,
+.ghost-button,
+.icon-button,
+.segment,
+.conversation-item,
+.crm-card,
+.prospect-row,
+.checklist-step {
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.empty-state {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  text-align: center;
+}
+
+.empty-state .ghost-button {
+  min-height: 34px;
+  font-size: 12px;
+}
+
+@media (max-width: 1080px) {
+  .checklist-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .nav-group-label {
+    display: none;
+  }
+
+  .nav-badge {
+    right: 4px;
+    top: 4px;
+    transform: none;
+    min-width: 16px;
+    height: 16px;
+    font-size: 10px;
+  }
+}
+
+@media (max-width: 480px) {
+  .checklist-steps {
+    grid-template-columns: 1fr;
+  }
+
+  .toast-stack {
+    right: 10px;
+    bottom: 10px;
+  }
 }

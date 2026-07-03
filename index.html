@@ -103,6 +103,7 @@
             <svg><use href="#icon-rocket" /></svg>
             <span>控制台</span>
           </button>
+          <p class="nav-group-label">① 获客</p>
           <button class="nav-tab" data-view="discovery" type="button">
             <svg><use href="#icon-search" /></svg>
             <span>搜索</span>
@@ -111,6 +112,7 @@
             <svg><use href="#icon-users" /></svg>
             <span>潜客</span>
           </button>
+          <p class="nav-group-label">② 触达</p>
           <button class="nav-tab" data-view="email" type="button">
             <svg><use href="#icon-mail" /></svg>
             <span>邮件</span>
@@ -119,6 +121,11 @@
             <svg><use href="#icon-message" /></svg>
             <span>WhatsApp</span>
           </button>
+          <button class="nav-tab" data-view="automation" type="button">
+            <svg><use href="#icon-zap" /></svg>
+            <span>队列</span>
+          </button>
+          <p class="nav-group-label">③ 转化</p>
           <button class="nav-tab" data-view="inbox" type="button">
             <svg><use href="#icon-inbox" /></svg>
             <span>收件箱</span>
@@ -127,14 +134,11 @@
             <svg><use href="#icon-columns" /></svg>
             <span>CRM</span>
           </button>
-          <button class="nav-tab" data-view="automation" type="button">
-            <svg><use href="#icon-zap" /></svg>
-            <span>队列</span>
-          </button>
           <button class="nav-tab" data-view="analytics" type="button">
             <svg><use href="#icon-chart" /></svg>
             <span>分析</span>
           </button>
+          <p class="nav-group-label">系统</p>
           <button class="nav-tab" data-view="management" type="button">
             <svg><use href="#icon-briefcase" /></svg>
             <span>管理</span>
@@ -169,6 +173,7 @@
 
         <section class="view is-active" id="dashboardView" aria-labelledby="dashboardTitle">
           <h2 id="dashboardTitle" class="sr-only">控制台</h2>
+          <div id="onboardingChecklist"></div>
           <div class="command-grid">
             <form class="panel campaign-form" id="campaignForm">
               <div class="panel-heading">
@@ -894,6 +899,8 @@
         </section>
       </main>
     </div>
+
+    <div class="toast-stack" id="toastStack" aria-live="polite"></div>
 
     <script src="./app.js" defer></script>
   </body>

@@ -111,7 +111,9 @@ const elements = {
   dispatchWebhooks: $("#dispatchWebhooks"),
   webhookLog: $("#webhookLog"),
   autopilotToggle: $("#autopilotToggle"),
-  sendDueBtn: $("#sendDueBtn")
+  sendDueBtn: $("#sendDueBtn"),
+  toastStack: $("#toastStack"),
+  onboardingChecklist: $("#onboardingChecklist")
 };
 
 const WEBHOOK_CONNECTORS = {
@@ -222,6 +224,7 @@ function loadState() {
       selectedConversationId: parsed.selectedConversationId || fallback.selectedConversationId,
       relay: { ...fallback.relay, ...(parsed.relay || {}) },
       autopilot: { ...fallback.autopilot, ...(parsed.autopilot || {}) },
+      ui: { ...fallback.ui, ...(parsed.ui || {}) },
       logs: Array.isArray(parsed.logs) ? parsed.logs : fallback.logs,
       management: parsed.management
         ? mergeManagement(fallback.management, parsed.management)
@@ -286,6 +289,7 @@ function createDemoState() {
       whatsappNoReplyDays: 2
     },
     autopilot: { enabled: false, intervalSec: 8 },
+    ui: { checklistDismissed: false },
     management: createManagementState(campaign),
     logs: [{ id: makeId("log"), time: timestamp(), message: "示例自动化活动已生成" }]
   };
@@ -453,6 +457,8 @@ function render() {
   renderWebhookPanel();
   updateModeButtons();
   updateAutopilotButton();
+  renderNavBadges();
+  renderChecklist();
 }
 
 function ensureSelection() {
@@ -540,7 +546,7 @@ function renderQueries() {
 
   const queryHtml = filtered.length
     ? filtered.map(renderQueryItem).join("")
-    : `<div class="empty-state">暂无搜索式</div>`;
+    : `<div class="empty-state">暂无搜索式<button class="ghost-button" data-goto="dashboard" type="button">去生成开发计划 →</button></div>`;
 
   elements.queryList.innerHTML = queryHtml;
   elements.queryPreview.innerHTML = state.searchPlan.length
@@ -594,7 +600,7 @@ function renderProspects() {
   });
 
   if (!prospects.length) {
-    elements.prospectTable.innerHTML = `<div class="empty-state">暂无匹配潜客</div>`;
+    elements.prospectTable.innerHTML = `<div class="empty-state">暂无匹配潜客<button class="ghost-button" data-goto="discovery" type="button">去搜索导入线索 →</button></div>`;
     return;
   }
 
@@ -822,7 +828,7 @@ function renderWhatsappSequence() {
 
 function renderOutbox() {
   if (!state.outbox.length) {
-    elements.outboxList.innerHTML = `<div class="empty-state">暂无发信队列</div>`;
+    elements.outboxList.innerHTML = `<div class="empty-state">暂无发信队列<button class="ghost-button" data-goto="prospects" type="button">去挑选潜客 →</button></div>`;
     return;
   }
 
@@ -1076,7 +1082,7 @@ function renderConversationList(conversations) {
   });
 
   if (!filtered.length) {
-    elements.conversationList.innerHTML = `<div class="empty-state">暂无会话，先在「邮件」「WhatsApp」里把潜客加入队列</div>`;
+    elements.conversationList.innerHTML = `<div class="empty-state">暂无会话，先把潜客加入触达队列<button class="ghost-button" data-goto="email" type="button">去邮件序列 →</button></div>`;
     return;
   }
 
@@ -1130,7 +1136,7 @@ function renderTimeline(conversation) {
       const relayTag = event.relay ? `<span class="channel-badge relay">接力</span>` : "";
       const subject = event.subject ? `Subject: ${event.subject}\n\n` : "";
       return `
-        <article class="timeline-item outbound">
+        <article class="timeline-item outbound ${event.status === "已取消" ? "cancelled" : ""}">
           <div class="tl-meta">${channelBadge(event.channel)}${relayTag}<strong>${escapeHtml(event.title || "")}</strong><span>${escapeHtml(event.status || "")} · ${escapeHtml(event.timeLabel || "")}</span></div>
           <div class="tl-body">${escapeHtml(subject + (event.body || ""))}</div>
         </article>
@@ -2951,13 +2957,13 @@ async function autopilotTick() {
   if (relayed) actions.push(`跨渠道接力 ${relayed} 条`);
 
   // 6) 已回复且未响应的会话，自动生成 AI 回复草稿送审批
+  //    注意：忽略「已取消」的触达事件（回复即停产生），否则被取消的未来邮件会掩盖客户回复
   let drafts = 0;
   buildConversations().forEach((conversation) => {
-    if (
-      conversation.replied &&
-      conversation.lastEvent?.kind === "inbound" &&
-      createAiDraft(conversation.prospectId)
-    ) {
+    const lastMeaningful = [...conversation.events]
+      .reverse()
+      .find((e) => e.kind === "inbound" || (e.kind === "outbound" && e.status !== "已取消"));
+    if (conversation.replied && lastMeaningful?.kind === "inbound" && createAiDraft(conversation.prospectId)) {
       drafts += 1;
     }
   });
@@ -2980,6 +2986,85 @@ function updateAutopilotButton() {
   elements.autopilotToggle.classList.toggle("is-on", on);
   const label = elements.autopilotToggle.querySelector("span");
   if (label) label.textContent = on ? "自动驾驶：开" : "自动驾驶：关";
+}
+
+/* ---------- 导航徽标 + 新手引导清单 ---------- */
+
+function renderNavBadges() {
+  const badges = {
+    inbox: state.inbound.filter((m) => !m.read).length,
+    management:
+      state.whatsappQueue.filter((i) => i.status === "待人工确认").length +
+      state.outbox.filter((i) => i.status === "待审批").length,
+    automation: state.outbox.filter((i) => i.status === "待发送").length
+  };
+  elements.navTabs.forEach((tab) => {
+    const count = badges[tab.dataset.view] || 0;
+    let badge = tab.querySelector(".nav-badge");
+    if (!count) {
+      if (badge) badge.remove();
+      return;
+    }
+    if (!badge) {
+      badge = document.createElement("span");
+      badge.className = "nav-badge";
+      tab.appendChild(badge);
+    }
+    badge.textContent = count > 99 ? "99+" : String(count);
+  });
+}
+
+function renderChecklist() {
+  const host = elements.onboardingChecklist;
+  if (!host) return;
+  if (state.ui?.checklistDismissed) {
+    host.innerHTML = "";
+    return;
+  }
+  const steps = [
+    { label: "生成开发计划", hint: "填写产品与市场", done: state.searchPlan.length > 0, goto: "dashboard" },
+    { label: "导入搜索结果", hint: "粘贴官网/邮箱/CSV", done: state.prospects.length > 0, goto: "discovery" },
+    {
+      label: "线索入队触达",
+      hint: "审核线索并加入队列",
+      done: state.outbox.length + state.whatsappQueue.length > 0,
+      goto: "prospects"
+    },
+    {
+      label: "开启自动驾驶",
+      hint: "全流程自动流转",
+      done: !!state.autopilot?.enabled || state.outbox.some((o) => o.status === "已发送"),
+      action: "autopilot"
+    },
+    { label: "处理回复与审批", hint: "收件箱 + 审批中心", done: state.inbound.length > 0, goto: "inbox" }
+  ];
+  const doneCount = steps.filter((s) => s.done).length;
+  if (doneCount === steps.length) {
+    host.innerHTML = "";
+    return;
+  }
+  host.innerHTML = `
+    <div class="checklist-panel">
+      <div class="checklist-head">
+        <strong>快速上手 · ${doneCount}/${steps.length}</strong>
+        <button class="checklist-dismiss" data-checklist-dismiss type="button">不再显示</button>
+      </div>
+      <div class="checklist-steps">
+        ${steps
+          .map(
+            (step, index) => `
+              <button class="checklist-step ${step.done ? "done" : ""}" type="button" ${
+                step.action ? `data-checklist-action="${step.action}"` : `data-goto="${step.goto}"`
+              }>
+                <span class="step-dot">${step.done ? "✓" : index + 1}</span>
+                <span class="step-text"><strong>${step.label}</strong><small>${step.hint}</small></span>
+              </button>
+            `
+          )
+          .join("")}
+      </div>
+    </div>
+  `;
 }
 
 function normalizeRemoteProspects(items) {
@@ -3318,9 +3403,28 @@ function timestamp() {
   return new Date().toLocaleString("zh-CN", { hour12: false });
 }
 
-function addLog(message) {
+function addLog(message, options = {}) {
   state.logs.unshift({ id: makeId("log"), time: timestamp(), message });
   state.logs = state.logs.slice(0, 80);
+  if (options.toast !== false) showToast(message);
+}
+
+function showToast(message) {
+  if (!elements.toastStack) return;
+  const tone = /失败|错误|无法|没有|不重复/.test(message)
+    ? "warn"
+    : /自动驾驶|AI |AI意图|AI 意图/.test(message)
+      ? "auto"
+      : "info";
+  const node = document.createElement("div");
+  node.className = `toast ${tone}`;
+  node.textContent = message;
+  elements.toastStack.appendChild(node);
+  while (elements.toastStack.children.length > 3) elements.toastStack.firstChild.remove();
+  setTimeout(() => {
+    node.classList.add("hide");
+    setTimeout(() => node.remove(), 320);
+  }, 3600);
 }
 
 function saveCurrentCampaignSnapshot() {
@@ -3564,12 +3668,30 @@ function updateModeButtons() {
   elements.webhookMode.classList.toggle("is-active", state.settings.mode === "webhook");
 }
 
+function navigateTo(view) {
+  elements.navTabs.forEach((item) => item.classList.toggle("is-active", item.dataset.view === view));
+  elements.views.forEach((item) => item.classList.toggle("is-active", item.id === `${view}View`));
+}
+
 elements.navTabs.forEach((tab) => {
-  tab.addEventListener("click", () => {
-    const view = tab.dataset.view;
-    elements.navTabs.forEach((item) => item.classList.toggle("is-active", item === tab));
-    elements.views.forEach((item) => item.classList.toggle("is-active", item.id === `${view}View`));
-  });
+  tab.addEventListener("click", () => navigateTo(tab.dataset.view));
+});
+
+// 全局委托：空状态引导按钮 / 新手清单 的跳转与动作
+document.addEventListener("click", (event) => {
+  const gotoTarget = event.target.closest("[data-goto]");
+  if (gotoTarget) {
+    navigateTo(gotoTarget.dataset.goto);
+    return;
+  }
+  if (event.target.closest("[data-checklist-dismiss]")) {
+    state.ui = { ...(state.ui || {}), checklistDismissed: true };
+    saveState();
+    renderChecklist();
+    return;
+  }
+  const action = event.target.closest("[data-checklist-action]");
+  if (action?.dataset.checklistAction === "autopilot") setAutopilot(true);
 });
 
 elements.campaignForm.addEventListener("submit", (event) => {

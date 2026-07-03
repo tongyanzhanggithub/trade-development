@@ -1,3 +1,5 @@
+window.__APP_V = "8";
+
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
 const $ = (selector) => document.querySelector(selector);
@@ -2745,20 +2747,43 @@ async function runAutomation() {
 
   if (prospects?.length) {
     state.prospects = [...prospects, ...state.prospects];
-    state.prospects = verifyProspectList(state.prospects, state.campaign);
-  } else {
-    addLog("未配置采集 Webhook，也未导入搜索结果；已生成搜索任务，等待真实结果导入");
+  }
+
+  // 没有任何线索可跑：主动带用户去导入，而不是静默结束
+  if (!state.prospects.length) {
+    saveState();
+    render();
+    navigateTo("discovery");
+    elements.searchResultsInput.focus();
+    addLog("还没有线索：请在下方粘贴搜索结果（点「示例格式」可快速试用），或在「设置」接入采集 Webhook");
+    saveState();
+    renderLogs();
+    return;
+  }
+
+  // 有线索：跑完整一拍——补全验证 → 高分入队 → 到期发送 → WhatsApp → 接力
+  const raw = state.prospects.filter((item) => ["新发现", "待审核"].includes(item.status));
+  if (raw.length) {
+    const processed = verifyProspectList(enrichProspectList(raw, state.campaign), state.campaign);
+    const byId = new Map(processed.map((item) => [item.id, item]));
+    state.prospects = state.prospects.map((item) => byId.get(item.id) || item);
   }
 
   state.selectedProspectId = state.prospects[0]?.id || null;
   state.sequence = buildEmailSequence(state.campaign, getSelectedProspect());
   state.whatsappSequence = buildWhatsappSequence(state.campaign, getSelectedProspect());
-  if (state.prospects.length) {
-    queueTopProspects();
-    queueTopWhatsappProspects();
-    scheduleFollowupTasks(false);
-  }
-  addLog(`自动化完成：${state.prospects.length} 个线索，${state.outbox.length} 封邮件入队，${state.whatsappQueue.length} 条 WhatsApp 待确认`);
+  queueTopProspects();
+  queueTopWhatsappProspects();
+  scheduleFollowupTasks(false);
+  const sent = await sendDueEmails(true);
+  const waSent = state.settings.mode === "webhook" ? 0 : deliverApprovedWhatsapp(true);
+  const relayed = relayPass(true);
+  const pendingWa = state.whatsappQueue.filter((item) => item.status === "待人工确认").length;
+  addLog(
+    `自动化完成：${state.prospects.length} 个线索，发送 ${sent} 封邮件、${waSent} 条 WhatsApp，接力 ${relayed} 条${
+      pendingWa ? `；${pendingWa} 条 WhatsApp 待审批（管理→审批中心）` : ""
+    }`
+  );
   saveState();
   render();
 }

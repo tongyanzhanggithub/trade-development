@@ -26,6 +26,9 @@ const elements = {
   copyQueries: $("#copyQueries"),
   runDiscovery: $("#runDiscovery"),
   createProspects: $("#createProspects"),
+  loadImportExample: $("#loadImportExample"),
+  importSearchResults: $("#importSearchResults"),
+  searchResultsInput: $("#searchResultsInput"),
   queryFilter: $("#queryFilter"),
   queryList: $("#queryList"),
   exportQueries: $("#exportQueries"),
@@ -145,8 +148,7 @@ function createDemoState() {
     dailyLimit: 30
   };
   const searchPlan = generateSearchPlan(campaign);
-  let prospects = generateProspects(campaign, 15);
-  prospects = verifyProspectList(enrichProspectList(prospects, campaign), campaign);
+  let prospects = [];
   const selectedProspectId = prospects[0]?.id || null;
   const sequence = selectedProspectId
     ? buildEmailSequence(campaign, prospects.find((item) => item.id === selectedProspectId))
@@ -194,7 +196,7 @@ function createManagementState(campaign) {
         status: "运行中",
         stage: "开发中",
         createdAt: dateOffset(0),
-        prospects: 15,
+        prospects: 0,
         queued: 0,
         replies: 0
       }
@@ -420,9 +422,9 @@ function renderQueryItem(item) {
   return `
     <article class="query-item">
       <div class="query-main">
-        <strong>${escapeHtml(item.channel)} · ${escapeHtml(item.market)}</strong>
+        <strong>${escapeHtml(item.channel)} · ${escapeHtml(item.market)} · ${escapeHtml(item.priority || "P2")}</strong>
         <code>${escapeHtml(item.query)}</code>
-        <span>${escapeHtml(item.intent)}</span>
+        <span>${escapeHtml(item.intent)} · 下一步：${escapeHtml(item.nextAction || "打开搜索并导入公司官网")}</span>
       </div>
       <a class="ghost-button" href="${item.url}" target="_blank" rel="noreferrer">
         <svg><use href="#icon-link" /></svg>
@@ -543,6 +545,10 @@ function renderProspectDetail() {
       </div>
     </dl>
     <div class="detail-actions">
+      <button class="ghost-button" data-action="approve-prospect" type="button">
+        <svg><use href="#icon-check" /></svg>
+        <span>审核通过</span>
+      </button>
       <button class="ghost-button" data-action="write-email" type="button">
         <svg><use href="#icon-mail" /></svg>
         <span>生成邮件</span>
@@ -899,7 +905,7 @@ function renderAccountManager() {
 }
 
 function renderPipelineManager() {
-  const stages = ["新发现", "已丰富", "邮箱有效", "已入队", "已回复"];
+  const stages = ["新发现", "待审核", "已审核", "已丰富", "邮箱有效", "已入队", "已回复"];
   const maxCount = Math.max(1, ...stages.map((stage) => state.prospects.filter((item) => item.status === stage).length));
   elements.pipelineManager.innerHTML = stages
     .map((stage) => {
@@ -918,31 +924,99 @@ function renderPipelineManager() {
 
 function generateSearchPlan(campaign) {
   const product = campaign.product.trim();
-  const type = campaign.customerType.replaceAll(" ", " OR ");
   const markets = normalizeMarkets(campaign.markets);
+  const intent = buildCustomerSearchTerms(campaign.customerType);
+  const exclusions = "-alibaba -amazon -made-in-china -globalsources -temu -shein";
   const patterns = [
-    ["Google", "官网与采购邮箱", (market) => `"${product}" ${type} "${market}" "contact us"`],
-    ["Google", "采购负责人", (market) => `"${product}" "${market}" "purchasing manager" OR "sourcing manager"`],
-    ["LinkedIn", "公司主页", (market) => `site:linkedin.com/company "${product}" "${market}" importer OR distributor`],
-    ["B2B Directory", "批发商目录", (market) => `"${product}" "${market}" wholesale distributor directory`],
-    ["Customs Data", "进口记录", (market) => `"${product}" "${market}" importer "bill of lading"`],
-    ["Marketplace", "平台买家与竞品", (market) => `"${product}" "${market}" private label buyer retailer`],
-    ["Industry Association", "协会会员", (market) => `"${product}" "${market}" association members suppliers buyers`]
+    {
+      channel: "Google",
+      intent: "找真实进口商/分销商官网",
+      priority: "P1",
+      nextAction: "打开官网，找 About/Brands/Contact/Wholesale 页面",
+      build: (market) => `"${product}" (${intent.buyers}) "${market}" "contact" ${exclusions}`
+    },
+    {
+      channel: "Google",
+      intent: "找批发目录和经销商列表",
+      priority: "P1",
+      nextAction: "把目录里的公司官网粘贴到导入框",
+      build: (market) => `"${product}" "${market}" ("distributor list" OR "wholesale directory" OR "stockist") ${exclusions}`
+    },
+    {
+      channel: "Google",
+      intent: "找采购/品类负责人",
+      priority: "P1",
+      nextAction: "记录公司名、负责人职位、邮箱或 LinkedIn",
+      build: (market) => `"${product}" "${market}" ("sourcing manager" OR "buyer" OR "category manager" OR "procurement") ${exclusions}`
+    },
+    {
+      channel: "LinkedIn",
+      intent: "找公司主页和采购角色",
+      priority: "P2",
+      nextAction: "复制公司页 URL 或公司官网",
+      build: (market) => `site:linkedin.com/company "${product}" "${market}" (${intent.buyers})`
+    },
+    {
+      channel: "Retail",
+      intent: "找零售商/品牌商采购入口",
+      priority: "P2",
+      nextAction: "找 vendor/supplier application 页面",
+      build: (market) => `"${product}" "${market}" ("vendor application" OR "supplier application" OR "become a supplier") ${exclusions}`
+    },
+    {
+      channel: "Association",
+      intent: "找协会会员名录",
+      priority: "P2",
+      nextAction: "导入会员公司名录",
+      build: (market) => `"${product}" "${market}" ("member directory" OR "association members" OR "trade association")`
+    },
+    {
+      channel: "Customs Data",
+      intent: "找有进口记录的买家线索",
+      priority: "P3",
+      nextAction: "用海关数据服务核验真实进口商",
+      build: (market) => `"${product}" "${market}" ("importer" OR "bill of lading" OR "import data") ${exclusions}`
+    },
+    {
+      channel: "Competitor",
+      intent: "找竞品渠道和经销商",
+      priority: "P3",
+      nextAction: "从竞品 Where to buy/Dealer 页面反查客户",
+      build: (market) => `"${product}" "${market}" ("where to buy" OR "dealer locator" OR "authorized distributor") ${exclusions}`
+    }
   ];
 
   return markets.flatMap((market) =>
-    patterns.map(([channel, intent, build]) => {
-      const query = build(market);
+    patterns.map((pattern) => {
+      const query = pattern.build(market);
       return {
         id: makeId("query"),
-        channel,
+        channel: pattern.channel,
         market,
-        intent,
+        intent: pattern.intent,
+        priority: pattern.priority,
+        nextAction: pattern.nextAction,
         query,
         url: `https://www.google.com/search?q=${encodeURIComponent(query)}`
       };
     })
   );
+}
+
+function buildCustomerSearchTerms(customerType) {
+  if (customerType.includes("retailer")) {
+    return { buyers: '"retailer" OR "chain store" OR "category buyer" OR "vendor application"' };
+  }
+  if (customerType.includes("brand")) {
+    return { buyers: '"private label" OR "brand owner" OR "product manager" OR "sourcing"' };
+  }
+  if (customerType.includes("wholesaler")) {
+    return { buyers: '"wholesaler" OR "distributor" OR "trade supplier" OR "stockist"' };
+  }
+  if (customerType.includes("contractor")) {
+    return { buyers: '"project buyer" OR "contractor" OR "procurement" OR "building supply"' };
+  }
+  return { buyers: '"importer" OR "distributor" OR "wholesaler" OR "stockist"' };
 }
 
 function generateProspects(campaign, targetCount = 18) {
@@ -987,6 +1061,86 @@ function generateProspects(campaign, targetCount = 18) {
   return prospects.slice(0, targetCount);
 }
 
+function importSearchResultsText(text, campaign) {
+  const lines = text
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const markets = normalizeMarkets(campaign.markets);
+  const seen = new Set(state.prospects.map((item) => item.website || item.company.toLowerCase()));
+  const imported = [];
+
+  lines.forEach((line, index) => {
+    const prospect = parseProspectLine(line, campaign, markets[index % Math.max(markets.length, 1)] || markets[0]);
+    if (!prospect) return;
+    const key = prospect.website || prospect.company.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    imported.push(prospect);
+  });
+
+  return imported;
+}
+
+function parseProspectLine(line, campaign, market) {
+  const urlMatch = line.match(/https?:\/\/[^\s,，]+|www\.[^\s,，]+|[a-z0-9][a-z0-9.-]+\.[a-z]{2,}(?:\/[^\s,，]*)?/i);
+  const emailMatch = line.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
+  const phoneMatch = line.match(/(?:\+\d{1,3}[\s-]?)?(?:\(?\d{2,4}\)?[\s-]?)?\d{3,4}[\s-]?\d{4}/);
+  const website = urlMatch ? stripProtocol(urlMatch[0]).split("/")[0] : emailMatch ? emailMatch[0].split("@")[1] : "";
+  const company = cleanCompanyName(line, website, emailMatch?.[0]) || domainToCompany(website);
+
+  if (!company && !website && !emailMatch) return null;
+
+  const directWebsite = website && !/(google|linkedin|facebook|instagram|youtube|amazon|alibaba|made-in-china|globalsources)/i.test(website);
+  const score = Math.min(
+    96,
+    52 +
+      (directWebsite ? 18 : 4) +
+      (emailMatch ? 14 : 0) +
+      (phoneMatch ? 8 : 0) +
+      (/(import|distribut|wholesale|retail|buyer|sourcing|procurement)/i.test(line) ? 10 : 0)
+  );
+
+  return {
+    id: makeId("prospect"),
+    company: company || "未命名公司",
+    market,
+    source: "搜索结果导入",
+    website,
+    contactName: "待确认",
+    role: "待确认采购角色",
+    email: emailMatch?.[0] || "",
+    emailStatus: emailMatch ? "待验证" : "待查找",
+    phone: phoneMatch?.[0]?.replace(/\s+/g, " ") || "",
+    phoneStatus: phoneMatch ? "待人工确认" : "待查找",
+    status: "待审核",
+    score,
+    confidence: directWebsite ? 72 : 48,
+    buyingSignal: `从搜索结果导入，需核验是否采购 ${campaign.product}`,
+    companySize: "待确认",
+    searchQuery: line
+  };
+}
+
+function cleanCompanyName(line, website, email) {
+  let value = line
+    .replace(website || "", "")
+    .replace(email || "", "")
+    .replace(/https?:\/\/[^\s,，]+|www\.[^\s,，]+/gi, "")
+    .replace(/[,，|;；]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  value = value.split(/ - | – | \| /)[0]?.trim() || value;
+  if (value.length > 80) value = value.slice(0, 80).trim();
+  return value;
+}
+
+function domainToCompany(website) {
+  if (!website) return "";
+  const domain = website.replace(/^www\./, "").split(".")[0];
+  return capitalize(domain.replace(/[-_]+/g, " "));
+}
+
 function enrichProspectList(prospects, campaign) {
   const firstNames = ["Anna", "Mark", "Carla", "Omar", "Elin", "Lucas", "Maya", "David", "Sofia", "Nina", "Jonas", "Rita"];
   const lastNames = ["Weber", "Lewis", "Mendes", "Saeed", "Larsson", "Miller", "Khan", "Brown", "Garcia", "Hassan", "Smith", "Rossi"];
@@ -996,9 +1150,12 @@ function enrichProspectList(prospects, campaign) {
     const alias = aliases[index % aliases.length];
     return {
       ...prospect,
-      contactName: `${firstNames[index % firstNames.length]} ${lastNames[(index + 3) % lastNames.length]}`,
-      email: `${alias}@${prospect.website}`,
-      emailStatus: "待验证",
+      contactName:
+        prospect.contactName && !["待确认", "待补全"].includes(prospect.contactName)
+          ? prospect.contactName
+          : `${firstNames[index % firstNames.length]} ${lastNames[(index + 3) % lastNames.length]}`,
+      email: prospect.email || (prospect.website ? `${alias}@${prospect.website}` : ""),
+      emailStatus: prospect.email || prospect.website ? "待验证" : "待查找",
       phone: prospect.phone || makePhoneNumber(prospect.market, index),
       phoneStatus: "待人工确认",
       status: prospect.status === "已入队" ? prospect.status : "已丰富",
@@ -1137,16 +1294,27 @@ async function runAutomation() {
     prospects = await trySearchWebhook();
   }
 
-  state.prospects = prospects || generateProspects(state.campaign, Math.max(12, Math.min(36, state.campaign.dailyLimit)));
-  state.prospects = enrichProspectList(state.prospects, state.campaign);
-  state.prospects = verifyProspectList(state.prospects, state.campaign);
+  if (!prospects?.length && elements.searchResultsInput.value.trim()) {
+    prospects = importSearchResultsText(elements.searchResultsInput.value, state.campaign);
+    addLog(`从粘贴结果解析 ${prospects.length} 个线索`);
+  }
+
+  if (prospects?.length) {
+    state.prospects = [...prospects, ...state.prospects];
+    state.prospects = verifyProspectList(state.prospects, state.campaign);
+  } else {
+    addLog("未配置采集 Webhook，也未导入搜索结果；已生成搜索任务，等待真实结果导入");
+  }
+
   state.selectedProspectId = state.prospects[0]?.id || null;
   state.sequence = buildEmailSequence(state.campaign, getSelectedProspect());
   state.whatsappSequence = buildWhatsappSequence(state.campaign, getSelectedProspect());
-  queueTopProspects();
-  queueTopWhatsappProspects();
-  scheduleFollowupTasks(false);
-  addLog(`自动化完成：${state.prospects.length} 个潜客，${state.outbox.length} 封邮件入队，${state.whatsappQueue.length} 条 WhatsApp 待确认`);
+  if (state.prospects.length) {
+    queueTopProspects();
+    queueTopWhatsappProspects();
+    scheduleFollowupTasks(false);
+  }
+  addLog(`自动化完成：${state.prospects.length} 个线索，${state.outbox.length} 封邮件入队，${state.whatsappQueue.length} 条 WhatsApp 待确认`);
   saveState();
   render();
 }
@@ -1163,7 +1331,7 @@ async function trySearchWebhook() {
       addLog(`Webhook 返回 ${result.prospects.length} 个潜客`);
       return normalizeRemoteProspects(result.prospects);
     }
-    addLog("Webhook 未返回潜客，切换本地生成");
+    addLog("Webhook 未返回线索，等待导入真实搜索结果");
   } catch (error) {
     addLog(`Webhook 失败：${error.message}`);
   }
@@ -1550,8 +1718,10 @@ function exportQueries() {
   const rows = state.searchPlan.map((item) => ({
     channel: item.channel,
     market: item.market,
+    priority: item.priority,
     intent: item.intent,
     query: item.query,
+    nextAction: item.nextAction,
     url: item.url
   }));
   download(`search-plan-${dateOffset(0)}.csv`, toCsv(rows), "text/csv;charset=utf-8");
@@ -1642,14 +1812,14 @@ elements.campaignForm.addEventListener("submit", (event) => {
   event.preventDefault();
   readCampaignFromForm();
   state.searchPlan = generateSearchPlan(state.campaign);
-  state.prospects = generateProspects(state.campaign, 18);
+  state.prospects = [];
   state.selectedProspectId = state.prospects[0]?.id || null;
   state.sequence = buildEmailSequence(state.campaign, getSelectedProspect());
   state.whatsappSequence = buildWhatsappSequence(state.campaign, getSelectedProspect());
   state.outbox = [];
   state.whatsappQueue = [];
   state.tasks = [];
-  addLog(`生成开发计划：${state.campaign.product}`);
+  addLog(`生成开发计划：${state.campaign.product}，等待导入真实搜索结果`);
   saveState();
   render();
 });
@@ -1687,13 +1857,35 @@ elements.runDiscovery.addEventListener("click", () => {
 elements.createProspects.addEventListener("click", () => {
   readCampaignFromForm();
   if (!state.searchPlan.length) state.searchPlan = generateSearchPlan(state.campaign);
-  state.prospects = generateProspects(state.campaign, 18);
+  const imported = importSearchResultsText(elements.searchResultsInput.value, state.campaign);
+  if (!imported.length) {
+    addLog("没有可解析的搜索结果；请先粘贴公司官网、LinkedIn 公司页、邮箱或 CSV 行");
+    saveState();
+    render();
+    return;
+  }
+  state.prospects = [...imported, ...state.prospects];
   state.selectedProspectId = state.prospects[0]?.id || null;
   state.sequence = buildEmailSequence(state.campaign, getSelectedProspect());
   state.whatsappSequence = buildWhatsappSequence(state.campaign, getSelectedProspect());
-  addLog(`生成 ${state.prospects.length} 个潜客`);
+  addLog(`导入 ${imported.length} 个真实搜索结果线索`);
   saveState();
   render();
+});
+
+elements.importSearchResults.addEventListener("click", () => {
+  elements.createProspects.click();
+});
+
+elements.loadImportExample.addEventListener("click", () => {
+  elements.searchResultsInput.value = [
+    "Example Imports Inc. https://exampleimports.com sourcing@exampleimports.com +1 555 0100",
+    "Nordic Home Retail, https://nordichome.example, category@nordichome.example",
+    "LinkedIn Company Page https://www.linkedin.com/company/example-trading Procurement Manager"
+  ].join("\n");
+  addLog("已填入搜索结果导入示例");
+  saveState();
+  renderLogs();
 });
 
 elements.queryFilter.addEventListener("input", renderQueries);
@@ -1754,6 +1946,13 @@ elements.prospectDetail.addEventListener("click", (event) => {
   if (action === "write-email") {
     state.sequence = buildEmailSequence(state.campaign, prospect);
     addLog(`已为 ${prospect.company} 生成邮件序列`);
+  }
+
+  if (action === "approve-prospect") {
+    state.prospects = state.prospects.map((item) =>
+      item.id === prospect.id ? { ...item, status: "已审核", confidence: Math.max(item.confidence, 80) } : item
+    );
+    addLog(`线索已审核通过：${prospect.company}`);
   }
 
   if (action === "open-whatsapp") {

@@ -492,6 +492,18 @@ textarea {
   gap: 10px;
 }
 
+.import-panel {
+  margin-top: 16px;
+}
+
+.import-panel textarea {
+  margin-top: 12px;
+  min-height: 190px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 .query-list.compact {
   max-height: 410px;
   overflow: auto;

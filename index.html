@@ -240,7 +240,7 @@
               </button>
               <button class="primary-button" id="createProspects" type="button">
                 <svg><use href="#icon-users" /></svg>
-                <span>生成潜客队列</span>
+                <span>导入搜索结果</span>
               </button>
             </div>
           </div>
@@ -255,6 +255,28 @@
               </button>
             </div>
             <div class="query-list" id="queryList"></div>
+          </section>
+          <section class="panel import-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Import real results</p>
+                <h2>搜索结果导入</h2>
+              </div>
+              <div class="topbar-actions">
+                <button class="ghost-button" id="loadImportExample" type="button">
+                  <svg><use href="#icon-copy" /></svg>
+                  <span>示例格式</span>
+                </button>
+                <button class="primary-button" id="importSearchResults" type="button">
+                  <svg><use href="#icon-users" /></svg>
+                  <span>解析为线索</span>
+                </button>
+              </div>
+            </div>
+            <label>
+              <span>粘贴 Google 结果、公司官网、LinkedIn 公司页、邮箱、电话或 CSV 行</span>
+              <textarea id="searchResultsInput" rows="8" placeholder="Example Imports Inc. https://exampleimports.com buyer@exampleimports.com +1 555 0100&#10;Nordic Home Retail, https://nordichome.example, category@nordichome.example"></textarea>
+            </label>
           </section>
         </section>
 
@@ -293,6 +315,8 @@
                 <select id="statusFilter" aria-label="状态筛选">
                   <option value="all">全部状态</option>
                   <option value="新发现">新发现</option>
+                  <option value="待审核">待审核</option>
+                  <option value="已审核">已审核</option>
                   <option value="已丰富">已丰富</option>
                   <option value="邮箱有效">邮箱有效</option>
                   <option value="待发信">待发信</option>

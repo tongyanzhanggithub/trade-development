@@ -196,6 +196,10 @@ const sourceChannels = [
   "Industry Association"
 ];
 
+// 模块级 UI 运行时状态（不持久化）——必须在首次 render() 前初始化，避免 TDZ 崩溃
+const quickReplyDrafts = {};
+const quickReplyChannels = {};
+
 let state = loadState();
 
 bindCampaignForm();
@@ -763,7 +767,7 @@ function renderEmailSelect() {
 function renderSequence() {
   const prospect = getSelectedProspect();
   if (!prospect) {
-    elements.sequenceGrid.innerHTML = `<div class="empty-state">暂无邮件序列</div>`;
+    elements.sequenceGrid.innerHTML = `<div class="empty-state">暂无邮件序列<button class="ghost-button" data-goto="discovery" type="button">先去导入线索 →</button></div>`;
     return;
   }
 
@@ -803,7 +807,7 @@ function renderWhatsappSelect() {
 function renderWhatsappSequence() {
   const prospect = getSelectedProspect();
   if (!prospect) {
-    elements.whatsappSequenceGrid.innerHTML = `<div class="empty-state">暂无 WhatsApp 话术</div>`;
+    elements.whatsappSequenceGrid.innerHTML = `<div class="empty-state">暂无 WhatsApp 话术<button class="ghost-button" data-goto="discovery" type="button">先去导入线索 →</button></div>`;
     return;
   }
 
@@ -1225,6 +1229,11 @@ function renderTimeline(conversation) {
     `
     : "";
 
+  // 若用户正在快捷回复框打字，记录焦点与光标，重渲染后恢复（避免自动驾驶 tick 打断输入）
+  const wasTyping = document.activeElement?.id === "quickReplyText";
+  const selStart = wasTyping ? document.activeElement.selectionStart : 0;
+  const selEnd = wasTyping ? document.activeElement.selectionEnd : 0;
+
   elements.inboxTimeline.innerHTML = `
     <div class="timeline-head">
       <div>
@@ -1238,6 +1247,14 @@ function renderTimeline(conversation) {
     ${quickReply}
     ${actions ? `<div class="timeline-actions">${actions}</div>` : ""}
   `;
+
+  if (wasTyping) {
+    const textarea = document.querySelector("#quickReplyText");
+    if (textarea) {
+      textarea.focus();
+      textarea.setSelectionRange(selStart, selEnd);
+    }
+  }
 }
 
 function createRelayWhatsapp(prospect, quiet = false) {
@@ -2717,7 +2734,7 @@ async function runAutomation() {
   addLog("开始运行端到端自动化");
 
   let prospects = null;
-  if (state.settings.mode === "webhook" && state.settings.searchWebhook) {
+  if (state.settings.mode === "webhook" && webhookUrl("search")) {
     prospects = await trySearchWebhook();
   }
 
@@ -2772,9 +2789,14 @@ function recordWebhook(name, entry) {
   state.webhookLog = state.webhookLog.slice(0, 40);
 }
 
-async function callWebhook(name, payload) {
+function webhookUrl(name) {
   const cfg = WEBHOOK_CONNECTORS[name];
-  const url = (elements[cfg.urlKey]?.value || state.settings[cfg.urlKey] || "").trim();
+  if (!cfg) return "";
+  return (elements[cfg.urlKey]?.value || state.settings[cfg.urlKey] || "").trim();
+}
+
+async function callWebhook(name, payload) {
+  const url = webhookUrl(name);
   if (!url) {
     setWebhookStatus(name, { ok: false, note: "未配置" });
     recordWebhook(name, { url: "", ok: false, note: "未配置 URL" });
@@ -3014,7 +3036,7 @@ async function autopilotTick() {
   // 4) 已审批 WhatsApp 发送
   if (state.settings.mode === "webhook") {
     const approved = state.whatsappQueue.filter((item) => item.status === "已审批");
-    if (approved.length && (state.settings.whatsappWebhook || "").trim()) {
+    if (approved.length && webhookUrl("whatsapp")) {
       const result = await callWebhook("whatsapp", { messages: approved });
       if (result.ok) {
         approved.forEach((item) => {
@@ -3049,7 +3071,7 @@ async function autopilotTick() {
 
   if (actions.length) {
     addLog(`自动驾驶：${actions.join("；")}`);
-    if (state.settings.mode === "webhook" && (state.settings.crmWebhook || "").trim()) {
+    if (state.settings.mode === "webhook" && webhookUrl("crm")) {
       callWebhook("crm", { prospects: crmProspectsPayload() }).then((result) => {
         if (result.ok) setJobDone("job-crm");
       });
@@ -3350,9 +3372,6 @@ function renderCrmDrawer() {
 
 /* ---------- 收件箱快捷回复 ---------- */
 
-const quickReplyDrafts = {};
-const quickReplyChannels = {};
-
 async function sendQuickReply(prospectId, channel, text) {
   const prospect = state.prospects.find((p) => p.id === prospectId);
   const body = (text || "").trim();
@@ -3381,7 +3400,7 @@ async function sendQuickReply(prospectId, channel, text) {
       url: buildWhatsappUrl(prospect, body)
     };
     state.whatsappQueue.push(item);
-    if (state.settings.mode === "webhook" && (state.settings.whatsappWebhook || "").trim()) {
+    if (state.settings.mode === "webhook" && webhookUrl("whatsapp")) {
       const result = await callWebhook("whatsapp", { messages: [item] });
       if (result.ok) {
         item.status = "已发送";
@@ -3414,7 +3433,7 @@ async function sendQuickReply(prospectId, channel, text) {
       reply: true
     };
     state.outbox.push(item);
-    if (state.settings.mode === "webhook" && (state.settings.sendWebhook || "").trim()) {
+    if (state.settings.mode === "webhook" && webhookUrl("send")) {
       const result = await callWebhook("send", { emails: [item] });
       if (result.ok) {
         item.status = "已发送";
@@ -3594,10 +3613,22 @@ function deliverEmail(item) {
   item.opened = item.delivered && (h >> 3) % 100 < Math.min(88, 38 + Math.round((prospect?.score || 60) * 0.5));
 }
 
-function simulateSendNext() {
+async function simulateSendNext() {
   const next = state.outbox.find((item) => item.status === "待发送");
   if (!next) {
     addLog("没有待发送邮件");
+    return;
+  }
+  if (state.settings.mode === "webhook" && webhookUrl("send")) {
+    const result = await callWebhook("send", { emails: [next] });
+    if (result.ok) {
+      next.status = "已发送";
+      next.sentAt = new Date().toISOString();
+      next.delivered = true;
+      addLog(`发信 Webhook：已派发 ${next.company} · ${next.label}`);
+    } else {
+      addLog("发信 Webhook 失败，邮件保留待发送");
+    }
     return;
   }
   deliverEmail(next);
@@ -3612,7 +3643,7 @@ async function sendDueEmails(quiet = false) {
     return 0;
   }
 
-  if (state.settings.mode === "webhook" && (state.settings.sendWebhook || "").trim()) {
+  if (state.settings.mode === "webhook" && webhookUrl("send")) {
     const result = await callWebhook("send", { emails: due });
     if (result.ok) {
       due.forEach((item) => {
@@ -3840,7 +3871,7 @@ async function runPendingManagementJobs() {
   const notes = [];
 
   // job-search：webhook 模式真实采集，本地模式提示
-  if (state.settings.mode === "webhook" && (state.settings.searchWebhook || "").trim()) {
+  if (state.settings.mode === "webhook" && webhookUrl("search")) {
     const got = await trySearchWebhook();
     if (got?.length) {
       state.prospects = [...got, ...state.prospects];
@@ -3875,7 +3906,7 @@ async function runPendingManagementJobs() {
   setJobDone("job-queue");
 
   // job-crm：webhook 模式真实同步
-  if (state.settings.mode === "webhook" && (state.settings.crmWebhook || "").trim()) {
+  if (state.settings.mode === "webhook" && webhookUrl("crm")) {
     const result = await callWebhook("crm", { prospects: crmProspectsPayload() });
     setJob("job-crm", {
       status: result.ok ? "已完成" : "失败",
@@ -4056,7 +4087,7 @@ document.addEventListener("click", (event) => {
     return;
   }
   const action = event.target.closest("[data-checklist-action]");
-  if (action?.dataset.checklistAction === "autopilot") setAutopilot(true);
+  if (action?.dataset.checklistAction === "autopilot" && !state.autopilot?.enabled) setAutopilot(true);
 });
 
 elements.campaignForm.addEventListener("submit", (event) => {
@@ -4083,6 +4114,7 @@ elements.resetDemo.addEventListener("click", () => {
   bindSettingsForm();
   bindManagementForm();
   bindInboxForm();
+  applyTheme();
   saveState();
   render();
 });
@@ -4305,8 +4337,8 @@ elements.whatsappSequenceGrid.addEventListener("click", async (event) => {
   renderLogs();
 });
 
-elements.simulateSend.addEventListener("click", () => {
-  simulateSendNext();
+elements.simulateSend.addEventListener("click", async () => {
+  await simulateSendNext();
   saveState();
   render();
 });
@@ -4467,6 +4499,7 @@ elements.analyticsRange.addEventListener("click", (event) => {
 });
 
 elements.crmBoard.addEventListener("click", (event) => {
+  if (Date.now() - crmLastDragAt < 300) return;
   const card = event.target.closest(".crm-card[data-prospect-id]");
   if (card) openCrmDrawer(card.dataset.prospectId);
 });
@@ -4508,15 +4541,20 @@ elements.crmDrawerOverlay.addEventListener("change", (event) => {
   }
 });
 
+// 用时间戳抑制拖拽后的误触 click（布尔标志在 drop 重渲染后可能因 dragend 无法冒泡而卡死）
+let crmLastDragAt = 0;
+
 elements.crmBoard.addEventListener("dragstart", (event) => {
   const card = event.target.closest("[data-prospect-id]");
   if (!card) return;
+  crmLastDragAt = Date.now();
   event.dataTransfer.setData("text/plain", card.dataset.prospectId);
   event.dataTransfer.effectAllowed = "move";
   card.classList.add("dragging");
 });
 
 elements.crmBoard.addEventListener("dragend", (event) => {
+  crmLastDragAt = Date.now();
   event.target.closest("[data-prospect-id]")?.classList.remove("dragging");
 });
 
@@ -4534,6 +4572,7 @@ elements.crmBoard.addEventListener("dragleave", (event) => {
 });
 
 elements.crmBoard.addEventListener("drop", (event) => {
+  crmLastDragAt = Date.now();
   const column = event.target.closest("[data-stage]");
   if (!column) return;
   event.preventDefault();
@@ -4635,6 +4674,7 @@ elements.campaignManager.addEventListener("click", (event) => {
     state.settings.mode = button.dataset.mode;
     updateModeButtons();
     renderStatus();
+    saveState();
   });
 });
 

@@ -156,6 +156,10 @@
             <button class="icon-button" id="exportJson" type="button" aria-label="导出全部数据" title="导出全部数据">
               <svg><use href="#icon-download" /></svg>
             </button>
+            <button class="ghost-button" id="autopilotToggle" type="button" title="开启后自动执行：线索处理→入队→发送→回传→接力→AI草稿">
+              <svg><use href="#icon-zap" /></svg>
+              <span>自动驾驶：关</span>
+            </button>
             <button class="primary-button" id="runAutomationTop" type="button">
               <svg><use href="#icon-play" /></svg>
               <span>运行自动化</span>
@@ -508,7 +512,11 @@
             <div class="topbar-actions">
               <button class="ghost-button" id="simulateSend" type="button">
                 <svg><use href="#icon-play" /></svg>
-                <span>模拟发送</span>
+                <span>发送一封</span>
+              </button>
+              <button class="ghost-button" id="sendDueBtn" type="button">
+                <svg><use href="#icon-zap" /></svg>
+                <span>发送今日到期</span>
               </button>
               <button class="primary-button" id="scheduleFollowups" type="button">
                 <svg><use href="#icon-check" /></svg>

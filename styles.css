@@ -1927,3 +1927,19 @@ button.management-row.is-selected {
 .run-log .log-item.fail strong {
   color: var(--red);
 }
+
+/* ---------- 自动驾驶开关 ---------- */
+.ghost-button.is-on {
+  border-color: var(--teal);
+  background: #e9f4f1;
+  color: var(--teal-dark);
+}
+
+.ghost-button.is-on svg {
+  animation: autopilot-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes autopilot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}

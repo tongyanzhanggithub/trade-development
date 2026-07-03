@@ -109,7 +109,9 @@ const elements = {
   simulateCallbacks: $("#simulateCallbacks"),
   exportAnalytics: $("#exportAnalytics"),
   dispatchWebhooks: $("#dispatchWebhooks"),
-  webhookLog: $("#webhookLog")
+  webhookLog: $("#webhookLog"),
+  autopilotToggle: $("#autopilotToggle"),
+  sendDueBtn: $("#sendDueBtn")
 };
 
 const WEBHOOK_CONNECTORS = {
@@ -219,6 +221,7 @@ function loadState() {
       webhookLog: Array.isArray(parsed.webhookLog) ? parsed.webhookLog : fallback.webhookLog,
       selectedConversationId: parsed.selectedConversationId || fallback.selectedConversationId,
       relay: { ...fallback.relay, ...(parsed.relay || {}) },
+      autopilot: { ...fallback.autopilot, ...(parsed.autopilot || {}) },
       logs: Array.isArray(parsed.logs) ? parsed.logs : fallback.logs,
       management: parsed.management
         ? mergeManagement(fallback.management, parsed.management)
@@ -282,6 +285,7 @@ function createDemoState() {
       emailNoReplyDays: 3,
       whatsappNoReplyDays: 2
     },
+    autopilot: { enabled: false, intervalSec: 8 },
     management: createManagementState(campaign),
     logs: [{ id: makeId("log"), time: timestamp(), message: "示例自动化活动已生成" }]
   };
@@ -448,6 +452,7 @@ function render() {
   renderManagement();
   renderWebhookPanel();
   updateModeButtons();
+  updateAutopilotButton();
 }
 
 function ensureSelection() {
@@ -468,12 +473,13 @@ function ensureSelection() {
 }
 
 function renderStatus() {
-  elements.campaignStatus.textContent = state.settings.mode === "webhook" ? "Webhook 模式" : "本地模式";
+  const mode = state.settings.mode === "webhook" ? "Webhook 模式" : "本地模式";
+  elements.campaignStatus.textContent = state.autopilot?.enabled ? `${mode} · 自动驾驶` : mode;
 }
 
 function renderMetrics() {
   const verified = state.prospects.filter((item) => item.status === "邮箱有效" || item.status === "已入队").length;
-  const queued = state.outbox.filter((item) => item.status !== "已发送").length;
+  const queued = state.outbox.filter((item) => ["待发送", "待审批"].includes(item.status)).length;
   const sent = state.outbox.filter((item) => item.status === "已发送").length;
   const whatsappReady = state.prospects.filter((item) => item.phone && item.phoneStatus !== "待查找").length;
   const metrics = [
@@ -1266,8 +1272,7 @@ ${state.campaign.companyName}`;
   return true;
 }
 
-function runCrossChannelRelay() {
-  readInboxRulesFromForm();
+function relayPass(quiet = false) {
   const conversations = buildConversations();
   const candidates = getRelayCandidates(conversations);
   let relayed = 0;
@@ -1279,13 +1284,18 @@ function runCrossChannelRelay() {
     if (createRelayEmail(conversation.prospect, true)) relayed += 1;
   });
 
-  if (relayed) {
+  if (relayed && !quiet) {
     addLog(
       `跨渠道接力：${candidates.emailToWa.length} 个转 WhatsApp、${candidates.waToEmail.length} 个回退邮件，共 ${relayed} 条`
     );
-  } else {
-    addLog("没有会话达到接力条件（可把未回天数设为 0，或对单个会话手动接力）");
   }
+  return relayed;
+}
+
+function runCrossChannelRelay() {
+  readInboxRulesFromForm();
+  const relayed = relayPass();
+  if (!relayed) addLog("没有会话达到接力条件（可把未回天数设为 0，或对单个会话手动接力）");
   saveState();
   render();
 }
@@ -1326,6 +1336,39 @@ function simulateInboundReply(prospectId) {
     advanceDealStage(prospectId, "已回复");
   }
   addLog(`收到客户回复（${channel === "whatsapp" ? "WhatsApp" : "邮件"}）：${conversation.company}`);
+
+  // 规则1：客户回复 → 自动停止其剩余触达序列
+  cancelSequenceOnReply(prospectId);
+
+  // 规则2：意图驱动 CRM——询价/要样/MOQ/认证/交期 视为有效询盘，自动推进
+  const intent = classifyIntent(body);
+  if (["price", "sample", "moq", "cert", "leadtime", "discount"].includes(intent.key)) {
+    advanceDealStage(prospectId, "询盘");
+    addLog(`AI 意图「${intent.label}」→ 商机自动推进到「询盘」：${conversation.company}`);
+  } else if (intent.key === "reject") {
+    addLog(`AI 意图「拒绝」→ ${conversation.company} 转入培育名单，停止主动触达`);
+  }
+
+  // 规则3：自动驾驶开启时，立即生成 AI 回复草稿送审批
+  if (state.autopilot?.enabled) createAiDraft(prospectId);
+}
+
+function cancelSequenceOnReply(prospectId) {
+  let cancelled = 0;
+  state.outbox.forEach((item) => {
+    if (item.prospectId === prospectId && item.status === "待发送" && !item.reply) {
+      item.status = "已取消";
+      cancelled += 1;
+    }
+  });
+  state.whatsappQueue.forEach((item) => {
+    if (item.prospectId === prospectId && ["待人工确认", "已审批"].includes(item.status) && !item.reply) {
+      item.status = "已取消";
+      cancelled += 1;
+    }
+  });
+  if (cancelled) addLog(`客户已回复，自动取消剩余 ${cancelled} 条待发触达（回复即停）`);
+  return cancelled;
 }
 
 function markConversationRead(prospectId) {
@@ -1401,9 +1444,20 @@ function getSuggestionForConversation(prospectId) {
   return { conversation, intent, prospect, channel, text: suggestReply(prospect, intent.key) };
 }
 
-function adoptSuggestedReply(prospectId) {
+function hasPendingAiReply(prospectId) {
+  return (
+    state.outbox.some((o) => o.prospectId === prospectId && o.label === "AI 回复" && o.status !== "已发送") ||
+    state.whatsappQueue.some((w) => w.prospectId === prospectId && w.label === "AI 回复" && w.status !== "已发送")
+  );
+}
+
+function adoptSuggestedReply(prospectId, asDraft = false) {
   const suggestion = getSuggestionForConversation(prospectId);
-  if (!suggestion) return;
+  if (!suggestion) return false;
+  if (hasPendingAiReply(prospectId)) {
+    if (!asDraft) addLog("该客户已有待处理的 AI 回复，避免重复");
+    return false;
+  }
   const { conversation, intent, prospect, channel, text } = suggestion;
 
   if (channel === "whatsapp") {
@@ -1416,7 +1470,7 @@ function adoptSuggestedReply(prospectId) {
       message: text,
       dueDate: dateOffset(0),
       createdAt: new Date().toISOString(),
-      status: state.management.rules.requireWhatsappApproval ? "待人工确认" : "已审批",
+      status: asDraft || state.management.rules.requireWhatsappApproval ? "待人工确认" : "已审批",
       step: `AI回复-${intent.key}-${state.whatsappQueue.length}`,
       reply: true,
       url: buildWhatsappUrl(prospect || {}, text)
@@ -1432,12 +1486,21 @@ function adoptSuggestedReply(prospectId) {
       body: text,
       dueDate: dateOffset(0),
       createdAt: new Date().toISOString(),
-      status: "待发送",
+      status: asDraft ? "待审批" : "待发送",
       step: `AI回复-${intent.key}-${state.outbox.length}`,
       reply: true
     });
   }
-  addLog(`采用 AI 建议回复（${channel === "whatsapp" ? "WhatsApp" : "邮件"}·${intent.label}）：${conversation.company}`);
+  addLog(
+    asDraft
+      ? `AI 自动生成回复草稿（${channel === "whatsapp" ? "WhatsApp" : "邮件"}·${intent.label}）待审批：${conversation.company}`
+      : `采用 AI 建议回复（${channel === "whatsapp" ? "WhatsApp" : "邮件"}·${intent.label}）：${conversation.company}`
+  );
+  return true;
+}
+
+function createAiDraft(prospectId) {
+  return adoptSuggestedReply(prospectId, true);
 }
 
 /* ---------- AI 客户评分（成交概率 + 可解释因子） ---------- */
@@ -2788,6 +2851,137 @@ function renderWebhookPanel() {
   renderWebhookLog();
 }
 
+/* ---------- 自动驾驶引擎（全流程自动流转） ---------- */
+
+let autopilotTimer = null;
+
+function setJob(id, patch) {
+  state.management.jobs = state.management.jobs.map((job) => (job.id === id ? { ...job, ...patch } : job));
+}
+
+function setJobDone(id) {
+  setJob(id, { status: "已完成", progress: 100, nextRun: state.autopilot?.enabled ? "自动驾驶中" : "下个周期" });
+}
+
+function crmProspectsPayload() {
+  return state.prospects.map((p) => ({
+    company: p.company,
+    market: p.market,
+    email: p.email,
+    phone: p.phone,
+    stage: p.dealStage,
+    score: computeLeadScore(p).probability
+  }));
+}
+
+function startAutopilotTimer() {
+  if (autopilotTimer) clearInterval(autopilotTimer);
+  autopilotTimer = setInterval(() => {
+    autopilotTick();
+  }, (state.autopilot?.intervalSec || 8) * 1000);
+}
+
+function setAutopilot(enabled) {
+  state.autopilot = { ...(state.autopilot || { intervalSec: 8 }), enabled };
+  if (enabled) {
+    startAutopilotTimer();
+    addLog("自动驾驶已开启：自动执行 线索补全验证→评分入队→到期发送→回传→跨渠道接力→AI 回复草稿");
+    saveState();
+    render();
+    autopilotTick();
+  } else {
+    if (autopilotTimer) clearInterval(autopilotTimer);
+    autopilotTimer = null;
+    addLog("自动驾驶已暂停，可随时手动操作");
+    saveState();
+    render();
+  }
+}
+
+async function autopilotTick() {
+  if (!state.autopilot?.enabled) return;
+  const actions = [];
+
+  // 1) 新线索自动补全 + 验证
+  const raw = state.prospects.filter((p) => ["新发现", "待审核"].includes(p.status));
+  if (raw.length) {
+    const processed = verifyProspectList(enrichProspectList(raw, state.campaign), state.campaign);
+    const byId = new Map(processed.map((p) => [p.id, p]));
+    state.prospects = state.prospects.map((p) => byId.get(p.id) || p);
+    actions.push(`补全并验证 ${processed.length} 条新线索`);
+    setJobDone("job-enrich");
+    setJobDone("job-verify");
+  }
+
+  // 2) 高分线索自动入队（遵守评分阈值、日上限、冷却期）
+  const queuedBefore = state.outbox.length + state.whatsappQueue.length;
+  queueTopProspects();
+  queueTopWhatsappProspects();
+  const queuedDelta = state.outbox.length + state.whatsappQueue.length - queuedBefore;
+  if (queuedDelta > 0) {
+    actions.push(`自动入队 ${queuedDelta} 条触达`);
+    setJobDone("job-queue");
+  }
+
+  // 3) 到期邮件批量发送（webhook 模式走真实派发，本地模拟并生成回传）
+  const sent = await sendDueEmails(true);
+  if (sent) actions.push(`发送 ${sent} 封到期邮件`);
+
+  // 4) 已审批 WhatsApp 发送
+  if (state.settings.mode === "webhook") {
+    const approved = state.whatsappQueue.filter((item) => item.status === "已审批");
+    if (approved.length && (state.settings.whatsappWebhook || "").trim()) {
+      const result = await callWebhook("whatsapp", { messages: approved });
+      if (result.ok) {
+        approved.forEach((item) => {
+          item.status = "已发送";
+          item.sentAt = new Date().toISOString();
+          item.delivered = true;
+        });
+        actions.push(`派发 ${approved.length} 条 WhatsApp`);
+      }
+    }
+  } else {
+    const waSent = deliverApprovedWhatsapp(true);
+    if (waSent) actions.push(`发送 ${waSent} 条已审批 WhatsApp`);
+  }
+
+  // 5) 跨渠道接力自动执行
+  const relayed = relayPass(true);
+  if (relayed) actions.push(`跨渠道接力 ${relayed} 条`);
+
+  // 6) 已回复且未响应的会话，自动生成 AI 回复草稿送审批
+  let drafts = 0;
+  buildConversations().forEach((conversation) => {
+    if (
+      conversation.replied &&
+      conversation.lastEvent?.kind === "inbound" &&
+      createAiDraft(conversation.prospectId)
+    ) {
+      drafts += 1;
+    }
+  });
+  if (drafts) actions.push(`生成 ${drafts} 份 AI 回复草稿待审批`);
+
+  if (actions.length) {
+    addLog(`自动驾驶：${actions.join("；")}`);
+    if (state.settings.mode === "webhook" && (state.settings.crmWebhook || "").trim()) {
+      callWebhook("crm", { prospects: crmProspectsPayload() }).then((result) => {
+        if (result.ok) setJobDone("job-crm");
+      });
+    }
+    saveState();
+    render();
+  }
+}
+
+function updateAutopilotButton() {
+  const on = !!state.autopilot?.enabled;
+  elements.autopilotToggle.classList.toggle("is-on", on);
+  const label = elements.autopilotToggle.querySelector("span");
+  if (label) label.textContent = on ? "自动驾驶：开" : "自动驾驶：关";
+}
+
 function normalizeRemoteProspects(items) {
   return items.map((item, index) => ({
     id: item.id || makeId("prospect"),
@@ -2810,6 +3004,12 @@ function normalizeRemoteProspects(items) {
   }));
 }
 
+function inCooldown(prospect) {
+  const days = state.management.rules.cooldownDays || 0;
+  if (!days || !prospect.lastQueuedAt) return false;
+  return Date.now() - new Date(prospect.lastQueuedAt).getTime() < days * 86400000;
+}
+
 function queueTopProspects() {
   const limit = Math.min(state.campaign.dailyLimit, state.management.rules.emailDailyLimit, 10);
   const candidates = [...state.prospects]
@@ -2817,7 +3017,9 @@ function queueTopProspects() {
       (item) =>
         item.email &&
         item.status !== "已入队" &&
-        item.score >= state.management.rules.scoreThreshold
+        item.status !== "已回复" &&
+        item.score >= state.management.rules.scoreThreshold &&
+        !inCooldown(item)
     )
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
@@ -2829,7 +3031,14 @@ function queueTopProspects() {
 function queueTopWhatsappProspects() {
   const limit = Math.min(state.campaign.dailyLimit, state.management.rules.whatsappDailyLimit, 8);
   const candidates = [...state.prospects]
-    .filter((item) => item.phone && item.score >= state.management.rules.scoreThreshold)
+    .filter(
+      (item) =>
+        item.phone &&
+        item.status !== "已回复" &&
+        item.score >= state.management.rules.scoreThreshold &&
+        !inCooldown(item) &&
+        !state.whatsappQueue.some((queued) => queued.prospectId === item.id)
+    )
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
 
@@ -2863,7 +3072,7 @@ function queueProspect(prospect, includeFullSequence = true) {
   });
 
   state.prospects = state.prospects.map((item) =>
-    item.id === prospect.id ? { ...item, status: "已入队" } : item
+    item.id === prospect.id ? { ...item, status: "已入队", lastQueuedAt: new Date().toISOString() } : item
   );
   advanceDealStage(prospect.id, "已触达");
 }
@@ -2895,6 +3104,9 @@ function queueWhatsappProspect(prospect, includeFullSequence = true) {
       url: buildWhatsappUrl(prospect, message.message)
     });
   });
+  state.prospects = state.prospects.map((item) =>
+    item.id === prospect.id ? { ...item, lastQueuedAt: new Date().toISOString() } : item
+  );
   advanceDealStage(prospect.id, "已触达");
 }
 
@@ -2923,19 +3135,65 @@ function scheduleFollowupTasks(showLog = true) {
   if (showLog) addLog(`生成 ${created} 个跟进任务`);
 }
 
+function deliverEmail(item) {
+  item.status = "已发送";
+  item.sentAt = new Date().toISOString();
+  const h = hashInt(item.prospectId + item.step);
+  item.delivered = h % 100 < 95;
+  const prospect = state.prospects.find((p) => p.id === item.prospectId);
+  item.opened = item.delivered && (h >> 3) % 100 < Math.min(88, 38 + Math.round((prospect?.score || 60) * 0.5));
+}
+
 function simulateSendNext() {
   const next = state.outbox.find((item) => item.status === "待发送");
   if (!next) {
     addLog("没有待发送邮件");
     return;
   }
-  next.status = "已发送";
-  next.sentAt = new Date().toISOString();
-  const h = hashInt(next.prospectId + next.step);
-  next.delivered = h % 100 < 95;
-  const prospect = state.prospects.find((p) => p.id === next.prospectId);
-  next.opened = next.delivered && (h >> 3) % 100 < Math.min(88, 38 + Math.round((prospect?.score || 60) * 0.5));
+  deliverEmail(next);
   addLog(`已模拟发送：${next.company} · ${next.label}`);
+}
+
+async function sendDueEmails(quiet = false) {
+  const today = dateOffset(0);
+  const due = state.outbox.filter((item) => item.status === "待发送" && item.dueDate <= today);
+  if (!due.length) {
+    if (!quiet) addLog("今天没有到期待发送邮件");
+    return 0;
+  }
+
+  if (state.settings.mode === "webhook" && (state.settings.sendWebhook || "").trim()) {
+    const result = await callWebhook("send", { emails: due });
+    if (result.ok) {
+      due.forEach((item) => {
+        item.status = "已发送";
+        item.sentAt = new Date().toISOString();
+        item.delivered = true;
+      });
+      addLog(`发信 Webhook：批量派发 ${due.length} 封到期邮件`);
+      return due.length;
+    }
+    addLog(`发信 Webhook 失败，${due.length} 封到期邮件保留待发送`);
+    return 0;
+  }
+
+  due.forEach(deliverEmail);
+  if (!quiet) addLog(`批量发送 ${due.length} 封到期邮件（本地模拟，已生成送达/打开回传）`);
+  return due.length;
+}
+
+function deliverApprovedWhatsapp(quiet = false) {
+  const approved = state.whatsappQueue.filter((item) => item.status === "已审批");
+  approved.forEach((item) => {
+    item.status = "已发送";
+    item.sentAt = new Date().toISOString();
+    const h = hashInt(item.prospectId + item.step);
+    item.delivered = h % 100 < 98;
+    const prospect = state.prospects.find((p) => p.id === item.prospectId);
+    item.read = item.delivered && (h >> 3) % 100 < Math.min(88, 50 + Math.round((prospect?.score || 60) * 0.5));
+  });
+  if (approved.length && !quiet) addLog(`发送 ${approved.length} 条已审批 WhatsApp（本地模拟）`);
+  return approved.length;
 }
 
 function getSelectedProspect() {
@@ -3109,13 +3367,60 @@ function createManagedCampaign() {
   addLog(`新建管理活动：${campaign.name}`);
 }
 
-function runPendingManagementJobs() {
-  state.management.jobs = state.management.jobs.map((job) => {
-    if (job.status === "待配置") return job;
-    return { ...job, status: "已完成", progress: 100, nextRun: "下个周期" };
-  });
-  addLog("管理后台待执行任务已运行");
-  runAutomation();
+async function runPendingManagementJobs() {
+  const notes = [];
+
+  // job-search：webhook 模式真实采集，本地模式提示
+  if (state.settings.mode === "webhook" && (state.settings.searchWebhook || "").trim()) {
+    const got = await trySearchWebhook();
+    if (got?.length) {
+      state.prospects = [...got, ...state.prospects];
+      notes.push(`采集 ${got.length} 个潜客`);
+    }
+    setJobDone("job-search");
+  } else {
+    setJob("job-search", { status: "本地模式", progress: 100, nextRun: "接入搜索 Webhook 后自动采集" });
+  }
+
+  // job-enrich + job-verify：真实补全验证新线索
+  const raw = state.prospects.filter((p) => ["新发现", "待审核"].includes(p.status));
+  if (raw.length) {
+    const processed = verifyProspectList(enrichProspectList(raw, state.campaign), state.campaign);
+    const byId = new Map(processed.map((p) => [p.id, p]));
+    state.prospects = state.prospects.map((p) => byId.get(p.id) || p);
+    notes.push(`补全验证 ${processed.length} 条线索`);
+  }
+  setJobDone("job-enrich");
+  setJobDone("job-verify");
+
+  // job-sequence：确保当前选中潜客的话术已生成
+  ensureSelection();
+  setJobDone("job-sequence");
+
+  // job-queue：高分入队（遵守全部规则）
+  const before = state.outbox.length + state.whatsappQueue.length;
+  queueTopProspects();
+  queueTopWhatsappProspects();
+  const queued = state.outbox.length + state.whatsappQueue.length - before;
+  if (queued) notes.push(`入队 ${queued} 条触达`);
+  setJobDone("job-queue");
+
+  // job-crm：webhook 模式真实同步
+  if (state.settings.mode === "webhook" && (state.settings.crmWebhook || "").trim()) {
+    const result = await callWebhook("crm", { prospects: crmProspectsPayload() });
+    setJob("job-crm", {
+      status: result.ok ? "已完成" : "失败",
+      progress: result.ok ? 100 : 0,
+      nextRun: result.ok ? "每 6 小时" : "检查 CRM Webhook"
+    });
+    if (result.ok) notes.push(`CRM 同步 ${state.prospects.length} 个客户`);
+  } else {
+    setJob("job-crm", { status: "待配置", progress: 0, nextRun: "配置 CRM Webhook 后" });
+  }
+
+  addLog(notes.length ? `任务中心执行：${notes.join("；")}` : "任务中心执行完成：暂无新增待处理数据");
+  saveState();
+  render();
 }
 
 function resetManagementJobs() {
@@ -3129,8 +3434,21 @@ function approveAllManagementItems() {
     count: 0,
     status: "已通过"
   }));
-  state.whatsappQueue = state.whatsappQueue.map((item) => ({ ...item, status: "已审批" }));
-  addLog("审批中心已全部通过");
+  let emailDrafts = 0;
+  state.outbox.forEach((item) => {
+    if (item.status === "待审批") {
+      item.status = "待发送";
+      emailDrafts += 1;
+    }
+  });
+  state.whatsappQueue = state.whatsappQueue.map((item) =>
+    item.status === "待人工确认" ? { ...item, status: "已审批" } : item
+  );
+  addLog(emailDrafts ? `审批中心已全部通过（含 ${emailDrafts} 份 AI 邮件草稿转待发送）` : "审批中心已全部通过");
+
+  // 审批通过后自动派发/发送，无需再去设置页手动操作
+  if (state.settings.mode === "webhook") dispatchPending();
+  else if (state.autopilot?.enabled) autopilotTick();
 }
 
 function saveManagementRules() {
@@ -3320,6 +3638,8 @@ elements.createProspects.addEventListener("click", () => {
   addLog(`导入 ${imported.length} 个真实搜索结果线索`);
   saveState();
   render();
+  // 自动驾驶开启时：导入即自动补全→验证→入队，无需手动逐步点击
+  if (state.autopilot?.enabled) autopilotTick();
 });
 
 elements.importSearchResults.addEventListener("click", () => {
@@ -3597,6 +3917,16 @@ document.querySelectorAll(".test-webhook").forEach((button) => {
 
 elements.dispatchWebhooks.addEventListener("click", dispatchPending);
 
+elements.autopilotToggle.addEventListener("click", () => {
+  setAutopilot(!state.autopilot?.enabled);
+});
+
+elements.sendDueBtn.addEventListener("click", async () => {
+  await sendDueEmails();
+  saveState();
+  render();
+});
+
 elements.crmBoard.addEventListener("dragstart", (event) => {
   const card = event.target.closest("[data-prospect-id]");
   if (!card) return;
@@ -3704,3 +4034,6 @@ elements.saveSettings.addEventListener("click", () => {
   saveState();
   render();
 });
+
+// 刷新页面后恢复自动驾驶
+if (state.autopilot?.enabled) startAutopilotTimer();

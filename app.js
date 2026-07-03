@@ -84,8 +84,96 @@ const elements = {
   crmWebhook: $("#crmWebhook"),
   searchProvider: $("#searchProvider"),
   emailProvider: $("#emailProvider"),
-  crmProvider: $("#crmProvider")
+  crmProvider: $("#crmProvider"),
+  runRelay: $("#runRelay"),
+  markAllRead: $("#markAllRead"),
+  relayEmailToWa: $("#relayEmailToWa"),
+  relayWaToEmail: $("#relayWaToEmail"),
+  relayEmailDays: $("#relayEmailDays"),
+  relayWaDays: $("#relayWaDays"),
+  relayKpis: $("#relayKpis"),
+  conversationFilter: $("#conversationFilter"),
+  conversationStatusFilter: $("#conversationStatusFilter"),
+  conversationList: $("#conversationList"),
+  inboxTimeline: $("#inboxTimeline"),
+  crmKpis: $("#crmKpis"),
+  crmBoard: $("#crmBoard"),
+  scheduleFollowupsCrm: $("#scheduleFollowupsCrm"),
+  exportCrm: $("#exportCrm"),
+  analyticsKpis: $("#analyticsKpis"),
+  analyticsFunnel: $("#analyticsFunnel"),
+  channelCompare: $("#channelCompare"),
+  relayImpact: $("#relayImpact"),
+  marketPerformance: $("#marketPerformance"),
+  templateRank: $("#templateRank"),
+  simulateCallbacks: $("#simulateCallbacks"),
+  exportAnalytics: $("#exportAnalytics"),
+  dispatchWebhooks: $("#dispatchWebhooks"),
+  webhookLog: $("#webhookLog")
 };
+
+const WEBHOOK_CONNECTORS = {
+  search: { urlKey: "searchWebhook", label: "搜索采集" },
+  enrich: { urlKey: "enrichWebhook", label: "邮箱查找/验证" },
+  send: { urlKey: "sendWebhook", label: "发信" },
+  whatsapp: { urlKey: "whatsappWebhook", label: "WhatsApp" },
+  crm: { urlKey: "crmWebhook", label: "CRM 同步" }
+};
+
+const DEAL_STAGES = ["线索", "已触达", "已回复", "询盘", "报价", "成交"];
+
+// 客户意图识别字典，按优先级从高到低排列（拒绝优先，其次议价、样品、价格等）
+const INTENTS = [
+  {
+    key: "reject",
+    label: "拒绝 / 暂不需要",
+    tone: "red",
+    next: "礼貌保留，转入季度培育名单",
+    keywords: ["not interested", "no thanks", "no need", "unsubscribe", "already have", "not looking", "no longer", "stop sending", "remove me"]
+  },
+  {
+    key: "discount",
+    label: "砍价 / 议价",
+    tone: "amber",
+    next: "了解目标价与年采购量，给出阶梯报价",
+    keywords: ["discount", "cheaper", "lower price", "best price", "target price", "too expensive", "better price", "reduce the price", "price down"]
+  },
+  {
+    key: "sample",
+    label: "要样品",
+    tone: "teal",
+    next: "确认样品政策与收货地址，安排寄样",
+    keywords: ["sample", "samples", "样品", "free sample", "send a sample", "sample policy"]
+  },
+  {
+    key: "price",
+    label: "询价 / 报价",
+    tone: "blue",
+    next: "发送报价单与价格区间，追问目标采购量",
+    keywords: ["price", "quote", "quotation", "cost", "how much", "pricing", "fob", "price list", "catalog", "catalogue", "offer"]
+  },
+  {
+    key: "leadtime",
+    label: "交期 / 物流",
+    tone: "blue",
+    next: "说明生产与打样周期，确认目标到货时间",
+    keywords: ["lead time", "delivery", "how long", "shipping", "when can", "dispatch", "eta", "production time"]
+  },
+  {
+    key: "moq",
+    label: "MOQ / 起订量",
+    tone: "blue",
+    next: "说明起订量与价格档位，争取首单",
+    keywords: ["moq", "minimum order", "minimum quantity", "min order"]
+  },
+  {
+    key: "cert",
+    label: "认证 / 资质",
+    tone: "blue",
+    next: "提供认证与检测报告，确认目标市场合规要求",
+    keywords: ["certificate", "certification", "test report", "fda", "ce", "iso", "compliance", "lfgb", "bsci", "rohs"]
+  }
+];
 
 const sourceChannels = [
   "Google",
@@ -101,6 +189,7 @@ let state = loadState();
 bindCampaignForm();
 bindSettingsForm();
 bindManagementForm();
+bindInboxForm();
 render();
 
 function loadState() {
@@ -126,6 +215,10 @@ function loadState() {
       outbox: Array.isArray(parsed.outbox) ? parsed.outbox : fallback.outbox,
       whatsappQueue: Array.isArray(parsed.whatsappQueue) ? parsed.whatsappQueue : fallback.whatsappQueue,
       tasks: Array.isArray(parsed.tasks) ? parsed.tasks : fallback.tasks,
+      inbound: Array.isArray(parsed.inbound) ? parsed.inbound : fallback.inbound,
+      webhookLog: Array.isArray(parsed.webhookLog) ? parsed.webhookLog : fallback.webhookLog,
+      selectedConversationId: parsed.selectedConversationId || fallback.selectedConversationId,
+      relay: { ...fallback.relay, ...(parsed.relay || {}) },
       logs: Array.isArray(parsed.logs) ? parsed.logs : fallback.logs,
       management: parsed.management
         ? mergeManagement(fallback.management, parsed.management)
@@ -169,7 +262,8 @@ function createDemoState() {
       crmWebhook: "",
       searchProvider: "Google Custom Search / SerpAPI",
       emailProvider: "Hunter / Apollo / Dropcontact",
-      crmProvider: "Twenty / Wukong CRM"
+      crmProvider: "Twenty / Wukong CRM",
+      webhookStatus: {}
     },
     searchPlan,
     prospects,
@@ -179,6 +273,15 @@ function createDemoState() {
     outbox: [],
     whatsappQueue: [],
     tasks: [],
+    inbound: [],
+    webhookLog: [],
+    selectedConversationId: null,
+    relay: {
+      emailToWhatsapp: true,
+      whatsappToEmail: true,
+      emailNoReplyDays: 3,
+      whatsappNoReplyDays: 2
+    },
     management: createManagementState(campaign),
     logs: [{ id: makeId("log"), time: timestamp(), message: "示例自动化活动已生成" }]
   };
@@ -278,6 +381,23 @@ function bindManagementForm() {
   elements.ruleRequireApproval.checked = rules.requireWhatsappApproval;
 }
 
+function bindInboxForm() {
+  const relay = state.relay;
+  elements.relayEmailToWa.checked = relay.emailToWhatsapp;
+  elements.relayWaToEmail.checked = relay.whatsappToEmail;
+  elements.relayEmailDays.value = relay.emailNoReplyDays;
+  elements.relayWaDays.value = relay.whatsappNoReplyDays;
+}
+
+function readInboxRulesFromForm() {
+  state.relay = {
+    emailToWhatsapp: elements.relayEmailToWa.checked,
+    whatsappToEmail: elements.relayWaToEmail.checked,
+    emailNoReplyDays: clamp(Number(elements.relayEmailDays.value) || 0, 0, 60),
+    whatsappNoReplyDays: clamp(Number(elements.relayWaDays.value) || 0, 0, 60)
+  };
+}
+
 function readCampaignFromForm() {
   state.campaign = {
     product: elements.productInput.value.trim() || "your product",
@@ -321,8 +441,12 @@ function render() {
   renderOutbox();
   renderWhatsappQueue();
   renderTasks();
+  renderInbox();
+  renderCrm();
+  renderAnalytics();
   renderLogs();
   renderManagement();
+  renderWebhookPanel();
   updateModeButtons();
 }
 
@@ -486,13 +610,18 @@ function renderProspects() {
             </span>
             <span>${escapeHtml(item.market)}</span>
             <span>${escapeHtml(item.source)}</span>
-            <span><span class="score">${item.score}</span></span>
+            <span>${scoreBadge(item)}</span>
             <span><span class="badge">${escapeHtml(item.status)}</span></span>
           </button>
         `
       )
       .join("")}
   `;
+}
+
+function scoreBadge(prospect) {
+  const { probability, grade } = computeLeadScore(prospect);
+  return `<span class="prob-grade grade-${grade}">${grade}</span><span class="score">${probability}%</span>`;
 }
 
 function renderProspectDetail() {
@@ -544,6 +673,7 @@ function renderProspectDetail() {
         <dd>${escapeHtml(prospect.companySize)} · 置信度 ${prospect.confidence}%</dd>
       </div>
     </dl>
+    ${renderLeadScorePanel(prospect)}
     <div class="detail-actions">
       <button class="ghost-button" data-action="approve-prospect" type="button">
         <svg><use href="#icon-check" /></svg>
@@ -565,6 +695,35 @@ function renderProspectDetail() {
         <svg><use href="#icon-message" /></svg>
         <span>加入 WA</span>
       </button>
+    </div>
+  `;
+}
+
+function renderLeadScorePanel(prospect) {
+  const { probability, grade, factors } = computeLeadScore(prospect);
+  const maxPoints = Math.max(1, ...factors.map((f) => f.points));
+  const rows = factors
+    .map((factor) => {
+      const width = factor.points > 0 ? Math.max(8, Math.round((factor.points / maxPoints) * 100)) : 0;
+      const value = factor.points > 0 ? `+${factor.points}` : factor.detail || "0";
+      return `
+        <div class="factor-row ${factor.tone}">
+          <span class="factor-label">${escapeHtml(factor.label)}</span>
+          <span class="factor-bar"><span style="width:${width}%"></span></span>
+          <span class="factor-points">${escapeHtml(value)}</span>
+        </div>
+      `;
+    })
+    .join("");
+
+  return `
+    <div class="ai-score">
+      <div class="ai-score-head">
+        <span class="ai-badge">AI 成交概率</span>
+        <span class="prob-grade grade-${grade}">${grade} 级</span>
+      </div>
+      <div class="prob-value"><strong>${probability}%</strong><span>综合成交概率（含互动信号）</span></div>
+      <div class="factor-list">${rows}</div>
     </div>
   `;
 }
@@ -737,6 +896,1117 @@ function renderLogs() {
         )
         .join("")
     : `<div class="empty-state">暂无日志</div>`;
+}
+
+/* ---------- 全渠道统一收件箱 + 跨渠道接力 ---------- */
+
+function toTime(value) {
+  if (!value) return 0;
+  if (typeof value === "number") return value;
+  const t = new Date(value).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
+
+function daysSinceMs(ms) {
+  if (!ms) return 0;
+  return Math.floor((Date.now() - ms) / 86400000);
+}
+
+function buildConversations() {
+  const map = new Map();
+  const prospectById = new Map(state.prospects.map((item) => [item.id, item]));
+
+  const ensure = (id, company) => {
+    if (!map.has(id)) {
+      map.set(id, {
+        prospectId: id,
+        company: company || "未知客户",
+        events: [],
+        channels: new Set(),
+        replied: false,
+        unread: 0,
+        relayed: false,
+        prospect: prospectById.get(id) || null
+      });
+    }
+    const conversation = map.get(id);
+    if (company && conversation.company === "未知客户") conversation.company = company;
+    return conversation;
+  };
+
+  state.outbox.forEach((item) => {
+    const conversation = ensure(item.prospectId, item.company);
+    conversation.channels.add("email");
+    if (item.relay) conversation.relayed = true;
+    conversation.events.push({
+      kind: "outbound",
+      channel: "email",
+      relay: !!item.relay,
+      title: item.label,
+      subject: item.subject,
+      body: item.body,
+      status: item.status,
+      timeLabel: item.sentAt ? `已发送 ${item.dueDate}` : `计划 ${item.dueDate}`,
+      sortKey: toTime(item.sentAt || item.createdAt || item.dueDate)
+    });
+  });
+
+  state.whatsappQueue.forEach((item) => {
+    const conversation = ensure(item.prospectId, item.company);
+    conversation.channels.add("whatsapp");
+    if (item.relay) conversation.relayed = true;
+    conversation.events.push({
+      kind: "outbound",
+      channel: "whatsapp",
+      relay: !!item.relay,
+      title: item.label,
+      body: item.message,
+      status: item.status,
+      url: item.url,
+      timeLabel: item.dueDate,
+      sortKey: toTime(item.sentAt || item.createdAt || item.dueDate)
+    });
+  });
+
+  state.inbound.forEach((item) => {
+    const conversation = ensure(item.prospectId, item.company);
+    conversation.channels.add(item.channel);
+    conversation.replied = true;
+    if (!item.read) conversation.unread += 1;
+    conversation.events.push({
+      kind: "inbound",
+      channel: item.channel,
+      body: item.body,
+      timeLabel: item.time,
+      sortKey: toTime(item.at || item.time)
+    });
+  });
+
+  const list = [...map.values()];
+  list.forEach((conversation) => {
+    conversation.events.sort((a, b) => a.sortKey - b.sortKey);
+    conversation.lastEvent = conversation.events[conversation.events.length - 1] || null;
+    conversation.lastActivity = conversation.lastEvent ? conversation.lastEvent.sortKey : 0;
+  });
+  list.sort((a, b) => b.lastActivity - a.lastActivity);
+  return list;
+}
+
+function getRelayCandidates(conversations) {
+  const emailToWa = [];
+  const waToEmail = [];
+
+  conversations.forEach((conversation) => {
+    if (conversation.replied || !conversation.prospect) return;
+    const emailEvents = conversation.events.filter((e) => e.kind === "outbound" && e.channel === "email");
+    const waEvents = conversation.events.filter((e) => e.kind === "outbound" && e.channel === "whatsapp");
+
+    if (state.relay.emailToWhatsapp && emailEvents.length && !waEvents.length && conversation.prospect.phone) {
+      const firstEmail = Math.min(...emailEvents.map((e) => e.sortKey));
+      if (daysSinceMs(firstEmail) >= state.relay.emailNoReplyDays) emailToWa.push(conversation);
+    }
+
+    if (state.relay.whatsappToEmail && waEvents.length && !emailEvents.length && conversation.prospect.email) {
+      const firstWa = Math.min(...waEvents.map((e) => e.sortKey));
+      if (daysSinceMs(firstWa) >= state.relay.whatsappNoReplyDays) waToEmail.push(conversation);
+    }
+  });
+
+  return { emailToWa, waToEmail };
+}
+
+function renderInbox() {
+  const conversations = buildConversations();
+  renderRelayKpis(conversations);
+  renderConversationList(conversations);
+
+  const exists = conversations.some((c) => c.prospectId === state.selectedConversationId);
+  if (!exists) state.selectedConversationId = conversations[0]?.prospectId || null;
+  const selected = conversations.find((c) => c.prospectId === state.selectedConversationId) || null;
+  renderTimeline(selected);
+}
+
+function renderRelayKpis(conversations) {
+  const candidates = getRelayCandidates(conversations);
+  const pending = candidates.emailToWa.length + candidates.waToEmail.length;
+  const relayed = conversations.filter((c) => c.relayed).length;
+  const replied = conversations.filter((c) => c.replied).length;
+  const cards = [
+    ["待接力", pending, "达到接力条件的会话"],
+    ["已接力", relayed, "已跨渠道补触达"],
+    ["已回复", replied, "客户已回复，停止接力"]
+  ];
+  elements.relayKpis.innerHTML = cards
+    .map(
+      ([label, value, hint]) => `
+        <article class="metric-card">
+          <p class="eyebrow">${label}</p>
+          <strong>${value}</strong>
+          <span>${hint}</span>
+        </article>
+      `
+    )
+    .join("");
+}
+
+function channelBadge(channel) {
+  return channel === "whatsapp"
+    ? `<span class="channel-badge whatsapp">WhatsApp</span>`
+    : `<span class="channel-badge email">邮件</span>`;
+}
+
+function renderConversationList(conversations) {
+  const filter = elements.conversationFilter.value.trim().toLowerCase();
+  const statusFilter = elements.conversationStatusFilter.value;
+
+  const filtered = conversations.filter((conversation) => {
+    const text = `${conversation.company} ${conversation.prospect?.market || ""}`.toLowerCase();
+    if (filter && !text.includes(filter)) return false;
+    if (statusFilter === "unreplied") return !conversation.replied;
+    if (statusFilter === "replied") return conversation.replied;
+    if (statusFilter === "relayed") return conversation.relayed;
+    if (statusFilter === "unread") return conversation.unread > 0;
+    return true;
+  });
+
+  if (!filtered.length) {
+    elements.conversationList.innerHTML = `<div class="empty-state">暂无会话，先在「邮件」「WhatsApp」里把潜客加入队列</div>`;
+    return;
+  }
+
+  elements.conversationList.innerHTML = filtered
+    .map((conversation) => {
+      const active = conversation.prospectId === state.selectedConversationId ? "is-active" : "";
+      const channels = [...conversation.channels].map(channelBadge).join("");
+      const relayTag = conversation.relayed ? `<span class="channel-badge relay">接力</span>` : "";
+      const unread = conversation.unread ? `<span class="unread-dot">${conversation.unread}</span>` : "";
+      const status = conversation.replied ? `<span class="status-pill">已回复</span>` : "";
+      const last = conversation.lastEvent;
+      const preview = last
+        ? `${last.kind === "inbound" ? "↩ 客户：" : "→ "}${escapeHtml((last.body || "").replace(/\s+/g, " ").slice(0, 64))}`
+        : "暂无消息";
+      return `
+        <button class="conversation-item ${active}" data-conversation-id="${conversation.prospectId}" type="button">
+          <strong>${escapeHtml(conversation.company)}</strong>
+          <span class="conversation-meta">${channels}${relayTag}${status}${unread}</span>
+          <span class="conv-preview">${preview}</span>
+        </button>
+      `;
+    })
+    .join("");
+}
+
+function renderTimeline(conversation) {
+  if (!conversation) {
+    elements.inboxTimeline.innerHTML = `<div class="empty-state">选择左侧会话查看完整沟通时间线</div>`;
+    return;
+  }
+
+  const prospect = conversation.prospect;
+  const emailEvents = conversation.events.filter((e) => e.kind === "outbound" && e.channel === "email");
+  const waEvents = conversation.events.filter((e) => e.kind === "outbound" && e.channel === "whatsapp");
+  const canRelayWa =
+    !conversation.replied && emailEvents.length && !waEvents.length && prospect?.phone;
+  const canRelayEmail =
+    !conversation.replied && waEvents.length && !emailEvents.length && prospect?.email;
+
+  const events = conversation.events
+    .map((event) => {
+      if (event.kind === "inbound") {
+        const intent = classifyIntent(event.body);
+        return `
+          <article class="timeline-item inbound">
+            <div class="tl-meta">${channelBadge(event.channel)}<strong>客户回复</strong><span class="intent-tag ${intent.tone}">意图：${intent.label}</span><span>${escapeHtml(event.timeLabel || "")}</span></div>
+            <div class="tl-body">${escapeHtml(event.body || "")}</div>
+          </article>
+        `;
+      }
+      const relayTag = event.relay ? `<span class="channel-badge relay">接力</span>` : "";
+      const subject = event.subject ? `Subject: ${event.subject}\n\n` : "";
+      return `
+        <article class="timeline-item outbound">
+          <div class="tl-meta">${channelBadge(event.channel)}${relayTag}<strong>${escapeHtml(event.title || "")}</strong><span>${escapeHtml(event.status || "")} · ${escapeHtml(event.timeLabel || "")}</span></div>
+          <div class="tl-body">${escapeHtml(subject + (event.body || ""))}</div>
+        </article>
+      `;
+    })
+    .join("");
+
+  const sub = prospect
+    ? `${escapeHtml(prospect.market || "")} · ${escapeHtml(prospect.email || "无邮箱")} · ${escapeHtml(prospect.phone || "无号码")}`
+    : "潜客已从列表移除";
+
+  const actions = [
+    !conversation.replied
+      ? `<button class="ghost-button" data-inbox-action="simulate-reply" type="button"><svg><use href="#icon-message" /></svg><span>模拟客户回复</span></button>`
+      : "",
+    canRelayWa
+      ? `<button class="primary-button" data-inbox-action="relay-wa" type="button"><svg><use href="#icon-shuffle" /></svg><span>转 WhatsApp 接力</span></button>`
+      : "",
+    canRelayEmail
+      ? `<button class="primary-button" data-inbox-action="relay-email" type="button"><svg><use href="#icon-shuffle" /></svg><span>转邮件接力</span></button>`
+      : "",
+    conversation.unread
+      ? `<button class="ghost-button" data-inbox-action="mark-read" type="button"><svg><use href="#icon-check" /></svg><span>标记已读</span></button>`
+      : ""
+  ]
+    .filter(Boolean)
+    .join("");
+
+  const status = conversation.replied
+    ? `<span class="status-pill">已回复 · 接力已停止</span>`
+    : conversation.relayed
+      ? `<span class="channel-badge relay">已接力</span>`
+      : `<span class="tag">未回复</span>`;
+
+  const intent = getConversationIntent(conversation);
+  let aiPanel = "";
+  if (intent) {
+    const inboundEvents = conversation.events.filter((e) => e.kind === "inbound");
+    const replyChannel = inboundEvents[inboundEvents.length - 1]?.channel || "email";
+    const suggestion = suggestReply(prospect, intent.key);
+    aiPanel = `
+      <div class="ai-panel">
+        <div class="ai-panel-head">
+          <span class="ai-badge">AI 助手</span>
+          <span class="intent-tag ${intent.tone}">意图：${intent.label} · 置信度 ${intent.confidence}%</span>
+        </div>
+        <p class="ai-summary">${escapeHtml(summarizeConversation(conversation))}</p>
+        <p class="eyebrow">建议回复（${replyChannel === "whatsapp" ? "WhatsApp" : "邮件"}）</p>
+        <div class="ai-suggestion" id="aiSuggestion">${escapeHtml(suggestion)}</div>
+        <div class="ai-actions">
+          <button class="ghost-button" data-inbox-action="copy-suggestion" type="button"><svg><use href="#icon-copy" /></svg><span>复制建议</span></button>
+          <button class="primary-button" data-inbox-action="adopt-suggestion" type="button"><svg><use href="#icon-mail" /></svg><span>采用为回复</span></button>
+        </div>
+      </div>
+    `;
+  }
+
+  elements.inboxTimeline.innerHTML = `
+    <div class="timeline-head">
+      <div>
+        <h3>${escapeHtml(conversation.company)}</h3>
+        <p class="conv-sub">${sub}</p>
+      </div>
+      ${status}
+    </div>
+    <div class="timeline">${events || `<div class="empty-state">暂无消息</div>`}</div>
+    ${aiPanel}
+    ${actions ? `<div class="timeline-actions">${actions}</div>` : ""}
+  `;
+}
+
+function createRelayWhatsapp(prospect, quiet = false) {
+  if (!prospect.phone) return false;
+  const exists = state.whatsappQueue.some((item) => item.prospectId === prospect.id);
+  if (exists) return false;
+
+  const first =
+    prospect.contactName && prospect.contactName !== "待补全" && prospect.contactName !== "待确认"
+      ? prospect.contactName.split(" ")[0]
+      : "there";
+  const message = `Hi ${first}, I emailed you about ${state.campaign.product} for ${prospect.company} but wasn't sure it reached you. Happy to share a short catalog and price range here on WhatsApp if that is easier. Thanks!`;
+  const status = state.management.rules.requireWhatsappApproval ? "待人工确认" : "已审批";
+
+  state.whatsappQueue.push({
+    id: makeId("waq"),
+    prospectId: prospect.id,
+    company: prospect.company,
+    phone: prospect.phone,
+    label: "接力触达",
+    message,
+    dueDate: dateOffset(0),
+    createdAt: new Date().toISOString(),
+    status,
+    step: "接力触达",
+    relay: true,
+    origin: "邮件未回接力",
+    url: buildWhatsappUrl(prospect, message)
+  });
+
+  if (!quiet) addLog(`邮件未回，已为 ${prospect.company} 生成 WhatsApp 接力（${status}）`);
+  return true;
+}
+
+function createRelayEmail(prospect, quiet = false) {
+  if (!prospect.email) return false;
+  const exists = state.outbox.some((item) => item.prospectId === prospect.id);
+  if (exists) return false;
+
+  const first =
+    prospect.contactName && prospect.contactName !== "待补全" && prospect.contactName !== "待确认"
+      ? prospect.contactName.split(" ")[0]
+      : "there";
+  const subject = `Following up by email · ${state.campaign.product}`;
+  const body = `Hi ${first},
+
+I tried to reach you on WhatsApp about ${state.campaign.product} for ${prospect.company}. In case email is easier, I can send a short catalog and a price range for your reference.
+
+Best regards,
+${state.campaign.senderName}
+${state.campaign.companyName}`;
+
+  state.outbox.push({
+    id: makeId("outbox"),
+    prospectId: prospect.id,
+    company: prospect.company,
+    email: prospect.email,
+    label: "接力邮件",
+    subject,
+    body,
+    dueDate: dateOffset(0),
+    createdAt: new Date().toISOString(),
+    status: "待发送",
+    step: "接力邮件",
+    relay: true,
+    origin: "WhatsApp 未覆盖回退邮件"
+  });
+
+  if (!quiet) addLog(`WhatsApp 未覆盖，已为 ${prospect.company} 生成邮件接力`);
+  return true;
+}
+
+function runCrossChannelRelay() {
+  readInboxRulesFromForm();
+  const conversations = buildConversations();
+  const candidates = getRelayCandidates(conversations);
+  let relayed = 0;
+
+  candidates.emailToWa.forEach((conversation) => {
+    if (createRelayWhatsapp(conversation.prospect, true)) relayed += 1;
+  });
+  candidates.waToEmail.forEach((conversation) => {
+    if (createRelayEmail(conversation.prospect, true)) relayed += 1;
+  });
+
+  if (relayed) {
+    addLog(
+      `跨渠道接力：${candidates.emailToWa.length} 个转 WhatsApp、${candidates.waToEmail.length} 个回退邮件，共 ${relayed} 条`
+    );
+  } else {
+    addLog("没有会话达到接力条件（可把未回天数设为 0，或对单个会话手动接力）");
+  }
+  saveState();
+  render();
+}
+
+function simulateInboundReply(prospectId) {
+  const conversation = buildConversations().find((c) => c.prospectId === prospectId);
+  if (!conversation) return;
+  const lastOutbound = [...conversation.events].reverse().find((e) => e.kind === "outbound");
+  const channel = lastOutbound?.channel || "email";
+  const product = state.campaign.product;
+  // 多样化的买家回复，覆盖不同意图，便于演示 AI 意图识别
+  const replyBank = [
+    `Hi, thanks for reaching out. Please send your best FOB price list and MOQ for ${product}. What is the lead time?`,
+    `Interested. Could you send a free sample of ${product} and share your sample policy?`,
+    `Your price looks a bit high compared to our current supplier. Can you offer a better price for a full container order?`,
+    `Do you have FDA and LFGB certificates and test reports for ${product}?`,
+    `Thanks, but we already have a supplier and are not looking to switch right now.`
+  ];
+  const existing = state.inbound.filter((m) => m.prospectId === prospectId).length;
+  const body = replyBank[(hashInt(prospectId) + existing) % replyBank.length];
+
+  state.inbound.push({
+    id: makeId("inbound"),
+    prospectId,
+    company: conversation.company,
+    channel,
+    body,
+    time: timestamp(),
+    at: Date.now(),
+    read: false
+  });
+
+  const prospect = state.prospects.find((item) => item.id === prospectId);
+  if (prospect) {
+    state.prospects = state.prospects.map((item) =>
+      item.id === prospectId ? { ...item, status: "已回复" } : item
+    );
+    advanceDealStage(prospectId, "已回复");
+  }
+  addLog(`收到客户回复（${channel === "whatsapp" ? "WhatsApp" : "邮件"}）：${conversation.company}`);
+}
+
+function markConversationRead(prospectId) {
+  state.inbound = state.inbound.map((item) =>
+    item.prospectId === prospectId ? { ...item, read: true } : item
+  );
+}
+
+/* ---------- AI 助手：意图识别 + 回复建议 + 摘要 ---------- */
+
+function classifyIntent(text) {
+  const lower = (text || "").toLowerCase();
+  // INTENTS 已按优先级排序（拒绝 > 议价 > 样品 > 询价 ...），
+  // 返回第一个命中的意图，避免通用词（如 "price"）盖过强信号（如 "better price"）
+  for (const intent of INTENTS) {
+    const hits = intent.keywords.filter((word) => lower.includes(word)).length;
+    if (hits > 0) return { ...intent, confidence: Math.min(95, 60 + hits * 15), hits };
+  }
+  return { key: "other", label: "需人工判断", tone: "muted", next: "追问客户具体需求后再决定话术", confidence: 0, hits: 0 };
+}
+
+function firstName(prospect) {
+  return prospect && prospect.contactName && !["待补全", "待确认"].includes(prospect.contactName)
+    ? prospect.contactName.split(" ")[0]
+    : "there";
+}
+
+function suggestReply(prospect, intentKey) {
+  const first = firstName(prospect);
+  const product = state.campaign.product;
+  const props = state.campaign.valueProps;
+  const certs = state.campaign.certifications;
+  const sender = state.campaign.senderName;
+  const templates = {
+    price: `Hi ${first}, thanks! I'll send our latest ${product} price list and a reference FOB quote today. Could you share your target quantity so I can give the most accurate pricing?`,
+    sample: `Hi ${first}, happy to arrange ${product} samples. I'll share our sample policy and lead time — could you confirm the models and a shipping address?`,
+    discount: `Hi ${first}, thanks for the feedback. Our pricing reflects ${props}. If you can share your target price and annual volume, I'll check the best rate we can support.`,
+    leadtime: `Hi ${first}, for ${product} our typical lead time is 25-35 days after order confirmation, and samples in 5-7 days. I can confirm exact timing once I know your quantity.`,
+    moq: `Hi ${first}, our MOQ for ${product} is flexible for a first order. Tell me your target quantity and I'll confirm the MOQ and price tiers.`,
+    cert: `Hi ${first}, we can provide ${certs} and full test reports for ${product}. I'll attach the certificates — is there any specific compliance your market requires?`,
+    reject: `Hi ${first}, understood, and thanks for letting me know. If your sourcing needs change I'm glad to help — may I share one or two key updates each quarter?`,
+    other: `Hi ${first}, thanks for your reply. Could you tell me a bit more about your needs for ${product} so I can help precisely?`
+  };
+  return `${templates[intentKey] || templates.other}\n\nBest regards,\n${sender}`;
+}
+
+function getConversationIntent(conversation) {
+  const inbound = conversation.events.filter((e) => e.kind === "inbound");
+  if (!inbound.length) return null;
+  return classifyIntent(inbound[inbound.length - 1].body);
+}
+
+function summarizeConversation(conversation) {
+  const outbound = conversation.events.filter((e) => e.kind === "outbound");
+  const inbound = conversation.events.filter((e) => e.kind === "inbound");
+  const channels = [...conversation.channels].map((c) => (c === "whatsapp" ? "WhatsApp" : "邮件")).join("+");
+  const stage = conversation.prospect?.dealStage || "线索";
+  if (!inbound.length) {
+    return `已通过 ${channels || "邮件"} 触达 ${outbound.length} 次，客户尚未回复；当前阶段「${stage}」。`;
+  }
+  const intent = classifyIntent(inbound[inbound.length - 1].body);
+  return `已触达 ${outbound.length} 次、收到 ${inbound.length} 条回复；最新意图「${intent.label}」，当前阶段「${stage}」。建议：${intent.next}。`;
+}
+
+function getSuggestionForConversation(prospectId) {
+  const conversation = buildConversations().find((c) => c.prospectId === prospectId);
+  if (!conversation) return null;
+  const intent = getConversationIntent(conversation);
+  if (!intent) return null;
+  const prospect = state.prospects.find((p) => p.id === prospectId);
+  const inbound = conversation.events.filter((e) => e.kind === "inbound");
+  const channel = inbound[inbound.length - 1]?.channel || "email";
+  return { conversation, intent, prospect, channel, text: suggestReply(prospect, intent.key) };
+}
+
+function adoptSuggestedReply(prospectId) {
+  const suggestion = getSuggestionForConversation(prospectId);
+  if (!suggestion) return;
+  const { conversation, intent, prospect, channel, text } = suggestion;
+
+  if (channel === "whatsapp") {
+    state.whatsappQueue.push({
+      id: makeId("waq"),
+      prospectId,
+      company: conversation.company,
+      phone: prospect?.phone || "",
+      label: "AI 回复",
+      message: text,
+      dueDate: dateOffset(0),
+      createdAt: new Date().toISOString(),
+      status: state.management.rules.requireWhatsappApproval ? "待人工确认" : "已审批",
+      step: `AI回复-${intent.key}-${state.whatsappQueue.length}`,
+      reply: true,
+      url: buildWhatsappUrl(prospect || {}, text)
+    });
+  } else {
+    state.outbox.push({
+      id: makeId("outbox"),
+      prospectId,
+      company: conversation.company,
+      email: prospect?.email || "",
+      label: "AI 回复",
+      subject: `Re: ${state.campaign.product}`,
+      body: text,
+      dueDate: dateOffset(0),
+      createdAt: new Date().toISOString(),
+      status: "待发送",
+      step: `AI回复-${intent.key}-${state.outbox.length}`,
+      reply: true
+    });
+  }
+  addLog(`采用 AI 建议回复（${channel === "whatsapp" ? "WhatsApp" : "邮件"}·${intent.label}）：${conversation.company}`);
+}
+
+/* ---------- AI 客户评分（成交概率 + 可解释因子） ---------- */
+
+function leadGrade(probability) {
+  if (probability >= 80) return "A";
+  if (probability >= 65) return "B";
+  if (probability >= 50) return "C";
+  return "D";
+}
+
+function computeLeadScore(prospect) {
+  const campaign = state.campaign;
+  const factors = [];
+  let score = 20; // 基础分
+
+  const add = (points, label, tone = "pos", detail = "") => {
+    score += points;
+    factors.push({ label, points, tone, detail });
+  };
+
+  // 1. 官网真实性
+  const directWebsite =
+    prospect.website &&
+    !/(google|linkedin|facebook|instagram|youtube|amazon|alibaba|made-in-china|globalsources|temu|shein|directory)/i.test(prospect.website);
+  if (directWebsite) add(12, "官网真实可直达");
+  else factors.push({ label: prospect.website ? "仅平台/目录来源" : "缺公司官网", points: 0, tone: "neg", detail: "建议补公司官网" });
+
+  // 2. 邮箱质量
+  if (prospect.emailStatus === "格式有效") add(10, "邮箱已验证");
+  else if (prospect.email) add(5, "有邮箱待验证");
+  else factors.push({ label: "缺邮箱", points: 0, tone: "neg", detail: "需补全联系方式" });
+
+  // 3. WhatsApp 号码
+  if (prospect.phone) add(6, "有 WhatsApp 号码");
+
+  // 4. 采购信号与角色
+  const signalText = `${prospect.buyingSignal || ""} ${prospect.searchQuery || ""} ${prospect.role || ""}`.toLowerCase();
+  if (/(import|distribut|wholesale|retail|buyer|sourcing|procurement|purchas|stockist)/.test(signalText)) {
+    add(10, "采购角色/信号匹配");
+  }
+
+  // 5. 客户类型匹配
+  const typeWords = (campaign.customerType || "").toLowerCase().split(/\s+/).filter(Boolean);
+  if (typeWords.some((word) => signalText.includes(word))) add(5, "客户类型匹配");
+
+  // 6. 互动信号（权重最高，主导评分分层）
+  const replied =
+    state.inbound.some((m) => m.prospectId === prospect.id) ||
+    prospect.status === "已回复" ||
+    stageIndex(prospect.dealStage || "线索") >= stageIndex("已回复");
+  const opened =
+    state.outbox.some((o) => o.prospectId === prospect.id && o.opened) ||
+    state.whatsappQueue.some((w) => w.prospectId === prospect.id && w.read);
+  const touched =
+    state.outbox.some((o) => o.prospectId === prospect.id) ||
+    state.whatsappQueue.some((w) => w.prospectId === prospect.id);
+  if (replied) add(25, "客户已回复（强意向）");
+  else if (opened) add(12, "邮件/消息已打开");
+  else if (touched) add(6, "已触达待响应");
+  else factors.push({ label: "尚未触达", points: 0, tone: "neg", detail: "加入队列开始触达" });
+
+  // 7. 资料置信度
+  if ((prospect.confidence || 0) >= 80) add(4, "资料置信度高");
+
+  const probability = clamp(Math.round(score), 5, 99);
+  return { probability, grade: leadGrade(probability), factors };
+}
+
+/* ---------- 商机管道看板 (CRM) ---------- */
+
+function stageIndex(stage) {
+  const index = DEAL_STAGES.indexOf(stage);
+  return index < 0 ? 0 : index;
+}
+
+function deriveDealStage(prospect) {
+  const replied =
+    prospect.status === "已回复" || state.inbound.some((item) => item.prospectId === prospect.id);
+  if (replied) return "已回复";
+  const touched =
+    prospect.status === "已入队" ||
+    state.outbox.some((item) => item.prospectId === prospect.id) ||
+    state.whatsappQueue.some((item) => item.prospectId === prospect.id);
+  if (touched) return "已触达";
+  return "线索";
+}
+
+function ensureDealStages() {
+  state.prospects.forEach((prospect) => {
+    if (!prospect.dealStage || !DEAL_STAGES.includes(prospect.dealStage)) {
+      prospect.dealStage = deriveDealStage(prospect);
+    }
+    if (typeof prospect.dealValue !== "number") {
+      prospect.dealValue = 6000 + Math.round((prospect.score || 50) * 220);
+    }
+  });
+}
+
+function advanceDealStage(prospectId, minStage) {
+  const prospect = state.prospects.find((item) => item.id === prospectId);
+  if (!prospect) return;
+  if (!prospect.dealStage || !DEAL_STAGES.includes(prospect.dealStage)) {
+    prospect.dealStage = deriveDealStage(prospect);
+  }
+  if (stageIndex(prospect.dealStage) < stageIndex(minStage)) prospect.dealStage = minStage;
+}
+
+function getProspectDue(prospectId) {
+  const today = dateOffset(0);
+  const dues = state.tasks
+    .filter((task) => task.prospectId === prospectId)
+    .map((task) => task.dueDate)
+    .sort();
+  if (!dues.length) return { kind: "none", date: null };
+  const overdue = dues.filter((date) => date < today);
+  if (overdue.length) return { kind: "overdue", date: overdue[0] };
+  if (dues.includes(today)) return { kind: "today", date: today };
+  return { kind: "upcoming", date: dues.find((date) => date > today) || dues[0] };
+}
+
+function formatMoney(value) {
+  return `$${Math.round(value).toLocaleString("en-US")}`;
+}
+
+function renderCrm() {
+  ensureDealStages();
+  renderCrmKpis();
+  renderCrmBoard();
+}
+
+function renderCrmKpis() {
+  const prospects = state.prospects;
+  const total = prospects.length;
+  const inquiry = prospects.filter((p) => stageIndex(p.dealStage) >= stageIndex("询盘")).length;
+  const quoting = prospects.filter((p) => p.dealStage === "报价").length;
+  const won = prospects.filter((p) => p.dealStage === "成交").length;
+  const winRate = total ? Math.round((won / total) * 100) : 0;
+  const overdue = prospects.filter(
+    (p) => p.dealStage !== "成交" && getProspectDue(p.id).kind === "overdue"
+  ).length;
+  const openValue = prospects
+    .filter((p) => p.dealStage !== "成交")
+    .reduce((sum, p) => sum + (p.dealValue || 0), 0);
+
+  const cards = [
+    ["总商机", total, "管道内客户数"],
+    ["询盘及以上", inquiry, "进入询盘/报价/成交"],
+    ["报价中", quoting, "等待客户决策"],
+    ["成交", won, `成交率 ${winRate}%`],
+    ["在谈金额", formatMoney(openValue), "未成交商机预估"],
+    ["超期跟进", overdue, "需立即处理"]
+  ];
+
+  elements.crmKpis.innerHTML = cards
+    .map(
+      ([label, value, hint]) => `
+        <article class="metric-card">
+          <p class="eyebrow">${label}</p>
+          <strong>${value}</strong>
+          <span>${hint}</span>
+        </article>
+      `
+    )
+    .join("");
+}
+
+function renderCrmBoard() {
+  elements.crmBoard.innerHTML = DEAL_STAGES.map((stage) => {
+    const cards = state.prospects.filter((p) => p.dealStage === stage);
+    const value = cards.reduce((sum, p) => sum + (p.dealValue || 0), 0);
+    const cardsHtml = cards.length
+      ? cards.map(renderCrmCard).join("")
+      : `<div class="empty-state">拖入客户到「${stage}」</div>`;
+    return `
+      <div class="crm-column" data-stage="${stage}">
+        <div class="crm-column-head">
+          <strong>${stage}</strong>
+          <span class="col-meta">${cards.length} · ${formatMoney(value)}</span>
+        </div>
+        ${cardsHtml}
+      </div>
+    `;
+  }).join("");
+}
+
+function renderCrmCard(prospect) {
+  const due = getProspectDue(prospect.id);
+  const replied = prospect.dealStage === "已回复" || state.inbound.some((m) => m.prospectId === prospect.id);
+  const needsFollowup =
+    stageIndex(prospect.dealStage) >= stageIndex("已触达") &&
+    prospect.dealStage !== "成交" &&
+    !replied;
+
+  let dueTag = "";
+  if (due.kind === "overdue") dueTag = `<span class="due-tag overdue">超期 ${due.date}</span>`;
+  else if (due.kind === "today") dueTag = `<span class="due-tag today">今日跟进</span>`;
+  else if (due.kind === "upcoming") dueTag = `<span class="due-tag upcoming">下次 ${due.date}</span>`;
+  else if (needsFollowup) dueTag = `<span class="due-tag unplanned">待安排跟进</span>`;
+
+  const channels = [];
+  if (state.outbox.some((o) => o.prospectId === prospect.id)) channels.push(`<span class="channel-badge email">邮件</span>`);
+  if (state.whatsappQueue.some((w) => w.prospectId === prospect.id)) channels.push(`<span class="channel-badge whatsapp">WhatsApp</span>`);
+  if (replied) channels.push(`<span class="channel-badge relay">已回复</span>`);
+
+  const isOverdue = due.kind === "overdue";
+
+  return `
+    <article class="crm-card ${isOverdue ? "is-overdue" : ""}" draggable="true" data-prospect-id="${prospect.id}">
+      <div class="crm-card-top">
+        <strong>${escapeHtml(prospect.company)}</strong>
+        <span class="score">${prospect.score}</span>
+      </div>
+      <div class="crm-card-meta">
+        <span>${escapeHtml(prospect.market)}</span>
+        <span class="crm-value">${formatMoney(prospect.dealValue || 0)}</span>
+      </div>
+      <div class="crm-card-badges">${channels.join("")}${dueTag}</div>
+    </article>
+  `;
+}
+
+function exportCrm() {
+  const rows = state.prospects.map((p) => ({
+    company: p.company,
+    market: p.market,
+    stage: p.dealStage,
+    score: p.score,
+    value: p.dealValue,
+    email: p.email,
+    phone: p.phone,
+    nextFollowup: getProspectDue(p.id).date || ""
+  }));
+  download("crm-pipeline.csv", toCsv(rows), "text/csv");
+}
+
+/* ---------- 数据分析看板 ---------- */
+
+function pct(part, whole) {
+  return whole ? Math.round((part / whole) * 100) : 0;
+}
+
+function hashInt(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i += 1) hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+  return hash;
+}
+
+function isReplied(prospect) {
+  return (
+    state.inbound.some((m) => m.prospectId === prospect.id) ||
+    prospect.status === "已回复" ||
+    stageIndex(prospect.dealStage || "线索") >= stageIndex("已回复")
+  );
+}
+
+function replyChannels(prospect) {
+  const fromInbound = [...new Set(state.inbound.filter((m) => m.prospectId === prospect.id).map((m) => m.channel))];
+  if (fromInbound.length) return fromInbound;
+  if (!isReplied(prospect)) return [];
+  if (state.outbox.some((o) => o.prospectId === prospect.id)) return ["email"];
+  if (state.whatsappQueue.some((w) => w.prospectId === prospect.id)) return ["whatsapp"];
+  return [];
+}
+
+function simulateChannelCallbacks() {
+  const openChance = (id, extra) => {
+    const prospect = state.prospects.find((p) => p.id === id);
+    const score = prospect?.score || 60;
+    return Math.min(88, 38 + Math.round(score * 0.5)) + extra;
+  };
+
+  state.outbox = state.outbox.map((item) => {
+    const h = hashInt(item.prospectId + item.step);
+    const delivered = h % 100 < 95;
+    const opened = delivered && (h >> 3) % 100 < openChance(item.prospectId, 0);
+    return {
+      ...item,
+      status: item.status === "待发送" ? "已发送" : item.status,
+      sentAt: item.sentAt || new Date().toISOString(),
+      delivered,
+      opened
+    };
+  });
+
+  state.whatsappQueue = state.whatsappQueue.map((item) => {
+    const h = hashInt(item.prospectId + item.step);
+    const delivered = h % 100 < 98;
+    const read = delivered && (h >> 3) % 100 < openChance(item.prospectId, 12);
+    return { ...item, delivered, read };
+  });
+
+  addLog(
+    `模拟渠道回传：${state.outbox.length} 封邮件、${state.whatsappQueue.length} 条 WhatsApp 已更新送达/打开状态`
+  );
+  saveState();
+  render();
+}
+
+function computeFunnel() {
+  const prospects = state.prospects;
+  const reached = prospects.filter(
+    (p) => state.outbox.some((o) => o.prospectId === p.id) || state.whatsappQueue.some((w) => w.prospectId === p.id)
+  );
+  const delivered = reached.filter(
+    (p) =>
+      state.outbox.some((o) => o.prospectId === p.id && o.delivered) ||
+      state.whatsappQueue.some((w) => w.prospectId === p.id && w.delivered)
+  );
+  const opened = reached.filter(
+    (p) =>
+      state.outbox.some((o) => o.prospectId === p.id && o.opened) ||
+      state.whatsappQueue.some((w) => w.prospectId === p.id && w.read)
+  );
+  const replied = reached.filter(isReplied);
+  const inquiry = prospects.filter((p) => stageIndex(p.dealStage) >= stageIndex("询盘"));
+  return {
+    reached: reached.length,
+    delivered: delivered.length,
+    opened: opened.length,
+    replied: replied.length,
+    inquiry: inquiry.length
+  };
+}
+
+function renderAnalytics() {
+  const funnel = computeFunnel();
+  renderAnalyticsKpis(funnel);
+  renderAnalyticsFunnel(funnel);
+  renderChannelCompare();
+  renderRelayImpact();
+  renderMarketPerformance();
+  renderTemplateRank();
+}
+
+function renderAnalyticsKpis(funnel) {
+  const cards = [
+    ["有效询盘 / 月", funnel.inquiry, "北极星指标", true],
+    ["触达客户", funnel.reached, "邮件或 WhatsApp 已触达", false],
+    ["打开率", `${pct(funnel.opened, funnel.delivered)}%`, "已送达中打开占比", false],
+    ["回复率", `${pct(funnel.replied, funnel.reached)}%`, "触达中回复占比", false],
+    ["询盘转化率", `${pct(funnel.inquiry, funnel.reached)}%`, "触达到询盘", false]
+  ];
+  elements.analyticsKpis.innerHTML = cards
+    .map(
+      ([label, value, hint, star]) => `
+        <article class="metric-card ${star ? "is-star" : ""}">
+          <p class="eyebrow">${label}</p>
+          <strong>${value}</strong>
+          <span>${hint}</span>
+        </article>
+      `
+    )
+    .join("");
+}
+
+function renderAnalyticsFunnel(funnel) {
+  const stages = [
+    ["触达", funnel.reached],
+    ["送达", funnel.delivered],
+    ["打开", funnel.opened],
+    ["回复", funnel.replied],
+    ["询盘", funnel.inquiry]
+  ];
+  const top = Math.max(1, funnel.reached);
+  elements.analyticsFunnel.innerHTML = stages
+    .map(([label, count], index) => {
+      const width = Math.max(3, Math.round((count / top) * 100));
+      const prev = index === 0 ? count : stages[index - 1][1];
+      const conv = index === 0 ? 100 : pct(count, prev);
+      return `
+        <div class="funnel-row">
+          <span>${label}</span>
+          <div class="funnel-bar"><span style="width:${width}%"></span></div>
+          <span class="funnel-figure"><strong>${count}</strong> · 环比 ${conv}%</span>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function channelStats(channel) {
+  const prospects = state.prospects;
+  const queue = channel === "email" ? state.outbox : state.whatsappQueue;
+  const openKey = channel === "email" ? "opened" : "read";
+  const has = (id) => queue.some((item) => item.prospectId === id);
+  const reached = prospects.filter((p) => has(p.id));
+  const delivered = reached.filter((p) => queue.some((item) => item.prospectId === p.id && item.delivered));
+  const opened = reached.filter((p) => queue.some((item) => item.prospectId === p.id && item[openKey]));
+  const replied = reached.filter((p) => replyChannels(p).includes(channel));
+  return {
+    reached: reached.length,
+    delivered: delivered.length,
+    opened: opened.length,
+    replied: replied.length
+  };
+}
+
+function renderChannelCompare() {
+  const blocks = [
+    ["email", "邮件", "打开"],
+    ["whatsapp", "WhatsApp", "已读"]
+  ];
+  elements.channelCompare.innerHTML = blocks
+    .map(([channel, name, openLabel]) => {
+      const stat = channelStats(channel);
+      const rows = [
+        ["触达", stat.reached, stat.reached],
+        ["送达", stat.delivered, stat.reached],
+        [openLabel, stat.opened, stat.reached],
+        ["回复", stat.replied, stat.reached]
+      ];
+      const rowsHtml = rows
+        .map(
+          ([label, value, base]) => `
+            <div class="channel-metric">
+              <span>${label}</span>
+              <div class="mini-bar ${channel}"><span style="width:${Math.max(2, pct(value, base))}%"></span></div>
+              <strong>${value}</strong>
+            </div>
+          `
+        )
+        .join("");
+      return `
+        <div class="channel-block">
+          <div class="channel-block-head">
+            <span class="channel-badge ${channel}">${name}</span>
+            <span class="score">回复率 ${pct(stat.replied, stat.reached)}%</span>
+          </div>
+          ${rowsHtml}
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function renderRelayImpact() {
+  const prospects = state.prospects;
+  const hasEmail = (id) => state.outbox.some((o) => o.prospectId === id);
+  const hasWa = (id) => state.whatsappQueue.some((w) => w.prospectId === id);
+
+  const dual = prospects.filter((p) => hasEmail(p.id) && hasWa(p.id));
+  const single = prospects.filter((p) => (hasEmail(p.id) || hasWa(p.id)) && !(hasEmail(p.id) && hasWa(p.id)));
+  const dualRate = pct(dual.filter(isReplied).length, dual.length);
+  const singleRate = pct(single.filter(isReplied).length, single.length);
+
+  let liftNote;
+  if (!dual.length && !single.length) liftNote = "先触达客户并运行接力后查看对比";
+  else if (!single.length) liftNote = "本批客户已全部双渠道覆盖";
+  else if (!singleRate) liftNote = dualRate ? "双渠道接力回复率显著高于单渠道" : "样本较小，继续触达后更准确";
+  else liftNote = `双渠道接力回复率约为单渠道的 ${(dualRate / singleRate).toFixed(1)} 倍`;
+
+  elements.relayImpact.innerHTML = `
+    <div class="impact-row">
+      <span>单渠道回复率<br /><small>${single.length} 个客户</small></span>
+      <strong>${singleRate}%</strong>
+    </div>
+    <div class="impact-row">
+      <span>双渠道接力回复率<br /><small>${dual.length} 个客户</small></span>
+      <strong>${dualRate}%</strong>
+    </div>
+    <div class="impact-lift">${liftNote}</div>
+  `;
+}
+
+function renderMarketPerformance() {
+  const markets = [...new Set(state.prospects.map((p) => p.market))];
+  if (!markets.length) {
+    elements.marketPerformance.innerHTML = `<div class="empty-state">暂无数据</div>`;
+    return;
+  }
+
+  const rows = markets
+    .map((market) => {
+      const list = state.prospects.filter((p) => p.market === market);
+      const reached = list.filter(
+        (p) => state.outbox.some((o) => o.prospectId === p.id) || state.whatsappQueue.some((w) => w.prospectId === p.id)
+      ).length;
+      const replied = list.filter(isReplied).length;
+      const inquiry = list.filter((p) => stageIndex(p.dealStage) >= stageIndex("询盘")).length;
+      return { market, touched: reached, replied, inquiry, rate: pct(replied, reached) };
+    })
+    .sort((a, b) => b.rate - a.rate || b.replied - a.replied);
+
+  elements.marketPerformance.innerHTML = `
+    <div class="market-row header">
+      <span>市场</span><span>触达</span><span>回复</span><span>询盘</span><span>回复率</span>
+    </div>
+    ${rows
+      .map(
+        (row) => `
+          <div class="market-row">
+            <span>${escapeHtml(row.market)}</span>
+            <span>${row.touched}</span>
+            <span>${row.replied}</span>
+            <span>${row.inquiry}</span>
+            <span>${row.rate}%</span>
+          </div>
+        `
+      )
+      .join("")}
+  `;
+}
+
+function renderTemplateRank() {
+  const repliedIds = new Set(state.prospects.filter(isReplied).map((p) => p.id));
+  const buckets = new Map();
+  const add = (channel, label, prospectId) => {
+    const key = `${channel}|${label}`;
+    if (!buckets.has(key)) buckets.set(key, { channel, label, recipients: new Set(), replied: new Set() });
+    const bucket = buckets.get(key);
+    bucket.recipients.add(prospectId);
+    if (repliedIds.has(prospectId)) bucket.replied.add(prospectId);
+  };
+
+  state.outbox.forEach((item) => add("email", item.label, item.prospectId));
+  state.whatsappQueue.forEach((item) => add("whatsapp", item.label, item.prospectId));
+
+  const rows = [...buckets.values()]
+    .map((bucket) => ({
+      channel: bucket.channel,
+      label: bucket.label,
+      sent: bucket.recipients.size,
+      replied: bucket.replied.size,
+      rate: pct(bucket.replied.size, bucket.recipients.size)
+    }))
+    .sort((a, b) => b.rate - a.rate || b.sent - a.sent)
+    .slice(0, 8);
+
+  if (!rows.length) {
+    elements.templateRank.innerHTML = `<div class="empty-state">先在「邮件」「WhatsApp」里把话术加入队列</div>`;
+    return;
+  }
+
+  elements.templateRank.innerHTML = `
+    <div class="template-row header">
+      <span>话术模板</span><span>发送</span><span>回复</span><span>回复率</span>
+    </div>
+    ${rows
+      .map(
+        (row) => `
+          <div class="template-row">
+            <span class="template-name"><span class="channel-badge ${row.channel}">${row.channel === "email" ? "邮件" : "WA"}</span> ${escapeHtml(row.label)}</span>
+            <span>${row.sent}</span>
+            <span>${row.replied}</span>
+            <span class="rate-bar"><span style="width:${Math.max(3, row.rate)}%"></span></span>
+          </div>
+        `
+      )
+      .join("")}
+  `;
+}
+
+function exportAnalytics() {
+  const funnel = computeFunnel();
+  const email = channelStats("email");
+  const wa = channelStats("whatsapp");
+  const rows = [
+    { metric: "触达客户", value: funnel.reached },
+    { metric: "送达", value: funnel.delivered },
+    { metric: "打开", value: funnel.opened },
+    { metric: "回复", value: funnel.replied },
+    { metric: "有效询盘", value: funnel.inquiry },
+    { metric: "回复率(%)", value: pct(funnel.replied, funnel.reached) },
+    { metric: "询盘转化率(%)", value: pct(funnel.inquiry, funnel.reached) },
+    { metric: "邮件回复率(%)", value: pct(email.replied, email.reached) },
+    { metric: "WhatsApp回复率(%)", value: pct(wa.replied, wa.reached) }
+  ];
+  download("analytics-metrics.csv", toCsv(rows), "text/csv");
 }
 
 function renderManagement() {
@@ -1085,7 +2355,9 @@ function importSearchResultsText(text, campaign) {
 function parseProspectLine(line, campaign, market) {
   const urlMatch = line.match(/https?:\/\/[^\s,，]+|www\.[^\s,，]+|[a-z0-9][a-z0-9.-]+\.[a-z]{2,}(?:\/[^\s,，]*)?/i);
   const emailMatch = line.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
-  const phoneMatch = line.match(/(?:\+\d{1,3}[\s-]?)?(?:\(?\d{2,4}\)?[\s-]?)?\d{3,4}[\s-]?\d{4}/);
+  const phoneMatch = line.match(
+    /\+\d[\d\s().-]{6,}\d|(?:\(?\d{2,4}\)?[\s-]?)?\d{3,4}[\s-]?\d{4}/
+  );
   const website = urlMatch ? stripProtocol(urlMatch[0]).split("/")[0] : emailMatch ? emailMatch[0].split("@")[1] : "";
   const company = cleanCompanyName(line, website, emailMatch?.[0]) || domainToCompany(website);
 
@@ -1123,10 +2395,18 @@ function parseProspectLine(line, campaign, market) {
 }
 
 function cleanCompanyName(line, website, email) {
-  let value = line
-    .replace(website || "", "")
-    .replace(email || "", "")
-    .replace(/https?:\/\/[^\s,，]+|www\.[^\s,，]+/gi, "")
+  let value = line;
+  // 先删除带协议/www 的完整 URL（含其后的域名与路径）
+  value = value.replace(/https?:\/\/\S+/gi, " ").replace(/\bwww\.\S+/gi, " ");
+  // 删除完整邮箱（须在删除裸域名之前，否则邮箱里的域名会先被删掉导致残留 name@）
+  if (email) value = value.split(email).join(" ");
+  // 删除残留的裸域名和协议片段
+  if (website) value = value.split(website).join(" ");
+  value = value.replace(/https?:\/\/+/gi, " ");
+  // 删除电话号码簇（宽松匹配 +、括号、空格、连字符组成的长数字串）
+  value = value.replace(/\+?\d[\d\s().-]{5,}\d/g, " ");
+  // 归一化分隔符与空白
+  value = value
     .replace(/[,，|;；]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -1320,33 +2600,192 @@ async function runAutomation() {
 }
 
 async function trySearchWebhook() {
-  try {
-    addLog("调用搜索采集 Webhook");
-    const result = await postWebhook(state.settings.searchWebhook, {
-      type: "search",
-      campaign: state.campaign,
-      searchPlan: state.searchPlan
-    });
-    if (Array.isArray(result.prospects) && result.prospects.length) {
-      addLog(`Webhook 返回 ${result.prospects.length} 个潜客`);
-      return normalizeRemoteProspects(result.prospects);
-    }
-    addLog("Webhook 未返回线索，等待导入真实搜索结果");
-  } catch (error) {
-    addLog(`Webhook 失败：${error.message}`);
+  const result = await callWebhook("search", { campaign: state.campaign, searchPlan: state.searchPlan });
+  if (result.ok && Array.isArray(result.data?.prospects) && result.data.prospects.length) {
+    addLog(`Webhook 返回 ${result.data.prospects.length} 个潜客`);
+    return normalizeRemoteProspects(result.data.prospects);
   }
+  addLog(result.ok ? "Webhook 未返回线索，等待导入真实搜索结果" : `搜索 Webhook 失败：${result.error || result.code || "未配置"}`);
   return null;
 }
 
-async function postWebhook(url, payload) {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
+/* ---------- Webhook 联调（连接测试 + 真实派发 + 活动日志） ---------- */
 
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return response.json();
+function setWebhookStatus(name, status) {
+  if (!state.settings.webhookStatus) state.settings.webhookStatus = {};
+  state.settings.webhookStatus[name] = { ...status, time: timestamp() };
+}
+
+function recordWebhook(name, entry) {
+  const label = WEBHOOK_CONNECTORS[name]?.label || name;
+  const detail = entry.ok
+    ? `${label} · ${entry.code || 200} · ${entry.ms}ms${entry.note ? ` · ${entry.note}` : ""}`
+    : `${label} · 失败 · ${entry.note || entry.code || "无响应"}`;
+  state.webhookLog.unshift({ id: makeId("wh"), ok: entry.ok, message: detail, url: entry.url || "", time: timestamp() });
+  state.webhookLog = state.webhookLog.slice(0, 40);
+}
+
+async function callWebhook(name, payload) {
+  const cfg = WEBHOOK_CONNECTORS[name];
+  const url = (elements[cfg.urlKey]?.value || state.settings[cfg.urlKey] || "").trim();
+  if (!url) {
+    setWebhookStatus(name, { ok: false, note: "未配置" });
+    recordWebhook(name, { url: "", ok: false, note: "未配置 URL" });
+    return { ok: false, skipped: true };
+  }
+  const start = Date.now();
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: name, sentAt: new Date().toISOString(), ...payload })
+    });
+    const ms = Date.now() - start;
+    let data = null;
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
+    setWebhookStatus(name, { ok: response.ok, code: response.status, ms });
+    recordWebhook(name, { url, ok: response.ok, code: response.status, ms });
+    return { ok: response.ok, code: response.status, data, ms };
+  } catch (error) {
+    const ms = Date.now() - start;
+    setWebhookStatus(name, { ok: false, note: error.message, ms });
+    recordWebhook(name, { url, ok: false, note: error.message, ms });
+    return { ok: false, error: error.message, ms };
+  }
+}
+
+async function testWebhook(name) {
+  readSettingsFromForm();
+  addLog(`测试 ${WEBHOOK_CONNECTORS[name]?.label || name} Webhook 连接`);
+  renderWebhookStatus(name, { ok: false, note: "测试中", pending: true });
+  const result = await callWebhook(name, {
+    ping: true,
+    campaign: { product: state.campaign.product, markets: state.campaign.markets }
+  });
+  addLog(result.skipped ? "未填写该 Webhook 地址" : result.ok ? "连接成功" : `连接失败：${result.error || result.code}`);
+  saveState();
+  render();
+}
+
+async function dispatchPending() {
+  readSettingsFromForm();
+
+  if (state.settings.mode !== "webhook") {
+    let sent = 0;
+    state.outbox.forEach((item) => {
+      if (item.status !== "待发送") return;
+      item.status = "已发送";
+      item.sentAt = new Date().toISOString();
+      const h = hashInt(item.prospectId + item.step);
+      item.delivered = h % 100 < 95;
+      const prospect = state.prospects.find((p) => p.id === item.prospectId);
+      item.opened = item.delivered && (h >> 3) % 100 < Math.min(88, 38 + Math.round((prospect?.score || 60) * 0.5));
+      sent += 1;
+    });
+    addLog(`本地模式：模拟发送 ${sent} 封邮件（切到 Webhook 模式可派发到真实服务）`);
+    saveState();
+    render();
+    return;
+  }
+
+  const pendingEmails = state.outbox.filter((item) => item.status === "待发送");
+  const approvedWa = state.whatsappQueue.filter((item) => item.status === "已审批");
+
+  if (pendingEmails.length) {
+    const result = await callWebhook("send", { emails: pendingEmails });
+    if (result.ok) {
+      pendingEmails.forEach((item) => {
+        item.status = "已发送";
+        item.sentAt = new Date().toISOString();
+        item.delivered = true;
+      });
+      addLog(`发信 Webhook：已派发 ${pendingEmails.length} 封邮件`);
+    } else {
+      addLog(`发信 Webhook 派发失败：${result.error || result.code || "未配置"}`);
+    }
+  }
+
+  if (approvedWa.length) {
+    const result = await callWebhook("whatsapp", { messages: approvedWa });
+    if (result.ok) {
+      approvedWa.forEach((item) => (item.status = "已发送"));
+      addLog(`WhatsApp Webhook：已派发 ${approvedWa.length} 条模板消息`);
+    } else {
+      addLog(`WhatsApp Webhook 派发失败：${result.error || result.code || "未配置"}`);
+    }
+  }
+
+  if (state.prospects.length) {
+    const result = await callWebhook("crm", {
+      prospects: state.prospects.map((p) => ({
+        company: p.company,
+        market: p.market,
+        email: p.email,
+        phone: p.phone,
+        stage: p.dealStage,
+        score: computeLeadScore(p).probability
+      }))
+    });
+    if (result.ok) addLog(`CRM Webhook：已同步 ${state.prospects.length} 个客户`);
+    else addLog(`CRM Webhook 同步失败：${result.error || result.code || "未配置"}`);
+  }
+
+  if (!pendingEmails.length && !approvedWa.length) {
+    addLog("没有待发送邮件或已审批 WhatsApp（可先在队列/审批中心处理）");
+  }
+  saveState();
+  render();
+}
+
+function renderWebhookStatus(name, override) {
+  const names = name ? [name] : Object.keys(WEBHOOK_CONNECTORS);
+  names.forEach((key) => {
+    const el = document.querySelector(`[data-webhook-status="${key}"]`);
+    if (!el) return;
+    const status = override || state.settings.webhookStatus?.[key];
+    el.classList.remove("ok", "fail", "pending");
+    if (!status) {
+      el.textContent = "未测试";
+      return;
+    }
+    if (status.pending) {
+      el.classList.add("pending");
+      el.textContent = "测试中…";
+      return;
+    }
+    if (status.ok) {
+      el.classList.add("ok");
+      el.textContent = `正常 · ${status.code || 200} · ${status.ms ?? "-"}ms`;
+    } else {
+      el.classList.add("fail");
+      el.textContent = status.note === "未配置" ? "未配置" : `失败 · ${status.note || status.code || ""}`;
+    }
+  });
+}
+
+function renderWebhookLog() {
+  if (!elements.webhookLog) return;
+  elements.webhookLog.innerHTML = state.webhookLog.length
+    ? state.webhookLog
+        .map(
+          (item) => `
+            <article class="log-item ${item.ok ? "ok" : "fail"}">
+              <strong>${escapeHtml(item.message)}</strong>
+              <span>${item.time}</span>
+            </article>
+          `
+        )
+        .join("")
+    : `<div class="empty-state">暂无 Webhook 调用记录</div>`;
+}
+
+function renderWebhookPanel() {
+  renderWebhookStatus();
+  renderWebhookLog();
 }
 
 function normalizeRemoteProspects(items) {
@@ -1426,6 +2865,7 @@ function queueProspect(prospect, includeFullSequence = true) {
   state.prospects = state.prospects.map((item) =>
     item.id === prospect.id ? { ...item, status: "已入队" } : item
   );
+  advanceDealStage(prospect.id, "已触达");
 }
 
 function queueWhatsappProspect(prospect, includeFullSequence = true) {
@@ -1455,6 +2895,7 @@ function queueWhatsappProspect(prospect, includeFullSequence = true) {
       url: buildWhatsappUrl(prospect, message.message)
     });
   });
+  advanceDealStage(prospect.id, "已触达");
 }
 
 function scheduleFollowupTasks(showLog = true) {
@@ -1489,6 +2930,11 @@ function simulateSendNext() {
     return;
   }
   next.status = "已发送";
+  next.sentAt = new Date().toISOString();
+  const h = hashInt(next.prospectId + next.step);
+  next.delivered = h % 100 < 95;
+  const prospect = state.prospects.find((p) => p.id === next.prospectId);
+  next.opened = next.delivered && (h >> 3) % 100 < Math.min(88, 38 + Math.round((prospect?.score || 60) * 0.5));
   addLog(`已模拟发送：${next.company} · ${next.label}`);
 }
 
@@ -1819,6 +3265,8 @@ elements.campaignForm.addEventListener("submit", (event) => {
   state.outbox = [];
   state.whatsappQueue = [];
   state.tasks = [];
+  state.inbound = [];
+  state.selectedConversationId = null;
   addLog(`生成开发计划：${state.campaign.product}，等待导入真实搜索结果`);
   saveState();
   render();
@@ -1829,6 +3277,7 @@ elements.resetDemo.addEventListener("click", () => {
   bindCampaignForm();
   bindSettingsForm();
   bindManagementForm();
+  bindInboxForm();
   saveState();
   render();
 });
@@ -2099,6 +3548,129 @@ elements.saveRules.addEventListener("click", () => {
 });
 
 elements.exportManagement.addEventListener("click", exportManagement);
+
+elements.runRelay.addEventListener("click", runCrossChannelRelay);
+
+elements.markAllRead.addEventListener("click", () => {
+  state.inbound = state.inbound.map((item) => ({ ...item, read: true }));
+  addLog("收件箱已全部标记已读");
+  saveState();
+  render();
+});
+
+[elements.relayEmailToWa, elements.relayWaToEmail, elements.relayEmailDays, elements.relayWaDays].forEach(
+  (input) => {
+    input.addEventListener("change", () => {
+      readInboxRulesFromForm();
+      saveState();
+      renderInbox();
+    });
+  }
+);
+
+elements.conversationFilter.addEventListener("input", renderInbox);
+elements.conversationStatusFilter.addEventListener("change", renderInbox);
+
+elements.conversationList.addEventListener("click", (event) => {
+  const row = event.target.closest("[data-conversation-id]");
+  if (!row) return;
+  state.selectedConversationId = row.dataset.conversationId;
+  markConversationRead(state.selectedConversationId);
+  saveState();
+  renderInbox();
+});
+
+elements.scheduleFollowupsCrm.addEventListener("click", () => {
+  scheduleFollowupTasks(true);
+  saveState();
+  render();
+});
+
+elements.exportCrm.addEventListener("click", exportCrm);
+
+elements.simulateCallbacks.addEventListener("click", simulateChannelCallbacks);
+elements.exportAnalytics.addEventListener("click", exportAnalytics);
+
+document.querySelectorAll(".test-webhook").forEach((button) => {
+  button.addEventListener("click", () => testWebhook(button.dataset.webhook));
+});
+
+elements.dispatchWebhooks.addEventListener("click", dispatchPending);
+
+elements.crmBoard.addEventListener("dragstart", (event) => {
+  const card = event.target.closest("[data-prospect-id]");
+  if (!card) return;
+  event.dataTransfer.setData("text/plain", card.dataset.prospectId);
+  event.dataTransfer.effectAllowed = "move";
+  card.classList.add("dragging");
+});
+
+elements.crmBoard.addEventListener("dragend", (event) => {
+  event.target.closest("[data-prospect-id]")?.classList.remove("dragging");
+});
+
+elements.crmBoard.addEventListener("dragover", (event) => {
+  const column = event.target.closest("[data-stage]");
+  if (!column) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "move";
+  column.classList.add("drag-over");
+});
+
+elements.crmBoard.addEventListener("dragleave", (event) => {
+  const column = event.target.closest("[data-stage]");
+  if (column && !column.contains(event.relatedTarget)) column.classList.remove("drag-over");
+});
+
+elements.crmBoard.addEventListener("drop", (event) => {
+  const column = event.target.closest("[data-stage]");
+  if (!column) return;
+  event.preventDefault();
+  column.classList.remove("drag-over");
+  const prospectId = event.dataTransfer.getData("text/plain");
+  const stage = column.dataset.stage;
+  const prospect = state.prospects.find((item) => item.id === prospectId);
+  if (!prospect || prospect.dealStage === stage) return;
+  prospect.dealStage = stage;
+  if (stage === "已回复" && prospect.status !== "已回复") prospect.status = "已回复";
+  addLog(`商机推进：${prospect.company} → ${stage}`);
+  saveState();
+  render();
+});
+
+elements.inboxTimeline.addEventListener("click", async (event) => {
+  const action = event.target.closest("[data-inbox-action]")?.dataset.inboxAction;
+  if (!action) return;
+  const prospectId = state.selectedConversationId;
+  const prospect = state.prospects.find((item) => item.id === prospectId);
+
+  if (action === "copy-suggestion") {
+    const suggestion = getSuggestionForConversation(prospectId);
+    if (suggestion) {
+      await copyText(suggestion.text);
+      addLog(`已复制 AI 建议回复：${suggestion.conversation.company}`);
+      saveState();
+      renderLogs();
+    }
+    return;
+  }
+
+  if (action === "simulate-reply") {
+    simulateInboundReply(prospectId);
+  } else if (action === "adopt-suggestion") {
+    adoptSuggestedReply(prospectId);
+  } else if (action === "relay-wa" && prospect) {
+    if (!createRelayWhatsapp(prospect)) addLog("无法生成 WhatsApp 接力：缺少号码或已存在");
+  } else if (action === "relay-email" && prospect) {
+    if (!createRelayEmail(prospect)) addLog("无法生成邮件接力：缺少邮箱或已存在");
+  } else if (action === "mark-read") {
+    markConversationRead(prospectId);
+    addLog("会话已标记已读");
+  }
+
+  saveState();
+  render();
+});
 
 elements.campaignManager.addEventListener("click", (event) => {
   const row = event.target.closest("[data-campaign-id]");

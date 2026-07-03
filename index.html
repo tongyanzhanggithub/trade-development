@@ -64,6 +64,29 @@
         <path d="M10 13a5 5 0 0 0 7.07 0l2.12-2.12a5 5 0 0 0-7.07-7.07L11 4.93" />
         <path d="M14 11a5 5 0 0 0-7.07 0L4.8 13.12a5 5 0 0 0 7.07 7.07L13 19.07" />
       </symbol>
+      <symbol id="icon-inbox" viewBox="0 0 24 24">
+        <path d="M4 13h4l2 3h4l2-3h4" />
+        <path d="M5 5h14l2 8v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5Z" />
+      </symbol>
+      <symbol id="icon-shuffle" viewBox="0 0 24 24">
+        <path d="M16 3h5v5" />
+        <path d="M4 20 21 3" />
+        <path d="M16 21h5v-5" />
+        <path d="m15 15 6 6" />
+        <path d="M4 4l5 5" />
+      </symbol>
+      <symbol id="icon-columns" viewBox="0 0 24 24">
+        <rect x="3" y="4" width="6" height="16" rx="1" />
+        <rect x="10.5" y="4" width="6" height="11" rx="1" />
+        <rect x="18" y="4" width="3" height="16" rx="1" />
+      </symbol>
+      <symbol id="icon-chart" viewBox="0 0 24 24">
+        <path d="M4 4v16h16" />
+        <path d="M8 16v-4" />
+        <path d="M12 16V8" />
+        <path d="M16 16v-6" />
+        <path d="M20 16v-9" />
+      </symbol>
     </svg>
 
     <div class="app-shell">
@@ -96,9 +119,21 @@
             <svg><use href="#icon-message" /></svg>
             <span>WhatsApp</span>
           </button>
+          <button class="nav-tab" data-view="inbox" type="button">
+            <svg><use href="#icon-inbox" /></svg>
+            <span>收件箱</span>
+          </button>
+          <button class="nav-tab" data-view="crm" type="button">
+            <svg><use href="#icon-columns" /></svg>
+            <span>CRM</span>
+          </button>
           <button class="nav-tab" data-view="automation" type="button">
             <svg><use href="#icon-zap" /></svg>
             <span>队列</span>
+          </button>
+          <button class="nav-tab" data-view="analytics" type="button">
+            <svg><use href="#icon-chart" /></svg>
+            <span>分析</span>
           </button>
           <button class="nav-tab" data-view="management" type="button">
             <svg><use href="#icon-briefcase" /></svg>
@@ -374,6 +409,96 @@
           <div class="sequence-grid" id="whatsappSequenceGrid"></div>
         </section>
 
+        <section class="view" id="inboxView" aria-labelledby="inboxTitle">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Omnichannel inbox</p>
+              <h2 id="inboxTitle">全渠道统一收件箱</h2>
+            </div>
+            <div class="topbar-actions">
+              <button class="ghost-button" id="markAllRead" type="button">
+                <svg><use href="#icon-check" /></svg>
+                <span>全部标记已读</span>
+              </button>
+              <button class="primary-button" id="runRelay" type="button">
+                <svg><use href="#icon-shuffle" /></svg>
+                <span>运行跨渠道接力</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="relay-bar">
+            <div class="relay-rule">
+              <p class="eyebrow">跨渠道接力规则</p>
+              <div class="relay-rule-grid">
+                <label class="toggle-row">
+                  <input id="relayEmailToWa" type="checkbox" />
+                  <span>邮件未回自动转 WhatsApp</span>
+                </label>
+                <label>
+                  <span>邮件未回天数</span>
+                  <input id="relayEmailDays" type="number" min="0" max="60" />
+                </label>
+                <label class="toggle-row">
+                  <input id="relayWaToEmail" type="checkbox" />
+                  <span>WhatsApp 未覆盖回退邮件</span>
+                </label>
+                <label>
+                  <span>WhatsApp 未回天数</span>
+                  <input id="relayWaDays" type="number" min="0" max="60" />
+                </label>
+              </div>
+              <p class="relay-hint">把未回天数设为 0 可立即演示接力。客户一旦回复，该会话自动停止接力。</p>
+            </div>
+            <div class="relay-kpis" id="relayKpis"></div>
+          </div>
+
+          <div class="inbox-layout">
+            <section class="panel table-panel">
+              <div class="query-toolbar">
+                <label class="search-box">
+                  <svg><use href="#icon-search" /></svg>
+                  <input id="conversationFilter" type="search" placeholder="搜索客户会话" />
+                </label>
+                <select id="conversationStatusFilter" aria-label="会话筛选">
+                  <option value="all">全部会话</option>
+                  <option value="unreplied">未回复</option>
+                  <option value="replied">已回复</option>
+                  <option value="relayed">已接力</option>
+                  <option value="unread">有未读</option>
+                </select>
+              </div>
+              <div class="conversation-list" id="conversationList"></div>
+            </section>
+            <section class="panel timeline-panel" id="inboxTimeline"></section>
+          </div>
+        </section>
+
+        <section class="view" id="crmView" aria-labelledby="crmTitle">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Deal pipeline</p>
+              <h2 id="crmTitle">商机管道看板</h2>
+            </div>
+            <div class="topbar-actions">
+              <button class="ghost-button" id="scheduleFollowupsCrm" type="button">
+                <svg><use href="#icon-check" /></svg>
+                <span>生成跟进任务</span>
+              </button>
+              <button class="primary-button" id="exportCrm" type="button">
+                <svg><use href="#icon-download" /></svg>
+                <span>导出管道</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="crm-kpis" id="crmKpis"></div>
+
+          <p class="crm-hint">把卡片拖到目标阶段即可推进商机。客户回复会自动推进到「已回复」，超期未跟进的卡片标红提醒。</p>
+
+          <div class="crm-board" id="crmBoard"></div>
+        </section>
+
         <section class="view" id="automationView" aria-labelledby="automationTitle">
           <div class="section-header">
             <div>
@@ -435,6 +560,80 @@
             </div>
             <div class="run-log" id="runLog"></div>
           </section>
+        </section>
+
+        <section class="view" id="analyticsView" aria-labelledby="analyticsTitle">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Analytics</p>
+              <h2 id="analyticsTitle">数据分析看板</h2>
+            </div>
+            <div class="topbar-actions">
+              <button class="ghost-button" id="simulateCallbacks" type="button">
+                <svg><use href="#icon-play" /></svg>
+                <span>模拟送达/打开回传</span>
+              </button>
+              <button class="primary-button" id="exportAnalytics" type="button">
+                <svg><use href="#icon-download" /></svg>
+                <span>导出指标</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="analytics-kpis" id="analyticsKpis"></div>
+
+          <div class="analytics-grid">
+            <section class="panel wide-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Channel funnel</p>
+                  <h2>渠道漏斗</h2>
+                </div>
+                <span class="status-pill" id="funnelNote">按客户去重统计</span>
+              </div>
+              <div class="funnel" id="analyticsFunnel"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Email vs WhatsApp</p>
+                  <h2>渠道对比</h2>
+                </div>
+              </div>
+              <div class="channel-compare" id="channelCompare"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Relay impact</p>
+                  <h2>双渠道接力效果</h2>
+                </div>
+              </div>
+              <div class="relay-impact" id="relayImpact"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Market performance</p>
+                  <h2>市场表现</h2>
+                </div>
+              </div>
+              <div class="market-table" id="marketPerformance"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Template reply rate</p>
+                  <h2>话术回复率排行</h2>
+                </div>
+              </div>
+              <div class="template-rank" id="templateRank"></div>
+            </section>
+          </div>
         </section>
 
         <section class="view" id="managementView" aria-labelledby="managementTitle">
@@ -585,26 +784,56 @@
               </div>
             </section>
             <section class="panel connector-panel">
-              <label>
-                <span>搜索采集 Webhook</span>
-                <input id="searchWebhook" placeholder="https://..." />
-              </label>
-              <label>
-                <span>邮箱查找/验证 Webhook</span>
-                <input id="enrichWebhook" placeholder="https://..." />
-              </label>
-              <label>
-                <span>发信 Webhook / SMTP 服务</span>
-                <input id="sendWebhook" placeholder="https://..." />
-              </label>
-              <label>
-                <span>WhatsApp Business Webhook</span>
-                <input id="whatsappWebhook" placeholder="https://..." />
-              </label>
-              <label>
-                <span>CRM 同步 Webhook</span>
-                <input id="crmWebhook" placeholder="https://..." />
-              </label>
+              <div class="connector-row" data-webhook="search">
+                <label>
+                  <span>搜索采集 Webhook</span>
+                  <input id="searchWebhook" placeholder="https://..." />
+                </label>
+                <div class="connector-foot">
+                  <button class="ghost-button test-webhook" data-webhook="search" type="button">测试连接</button>
+                  <span class="webhook-status" data-webhook-status="search">未测试</span>
+                </div>
+              </div>
+              <div class="connector-row" data-webhook="enrich">
+                <label>
+                  <span>邮箱查找/验证 Webhook</span>
+                  <input id="enrichWebhook" placeholder="https://..." />
+                </label>
+                <div class="connector-foot">
+                  <button class="ghost-button test-webhook" data-webhook="enrich" type="button">测试连接</button>
+                  <span class="webhook-status" data-webhook-status="enrich">未测试</span>
+                </div>
+              </div>
+              <div class="connector-row" data-webhook="send">
+                <label>
+                  <span>发信 Webhook / SMTP 服务</span>
+                  <input id="sendWebhook" placeholder="https://..." />
+                </label>
+                <div class="connector-foot">
+                  <button class="ghost-button test-webhook" data-webhook="send" type="button">测试连接</button>
+                  <span class="webhook-status" data-webhook-status="send">未测试</span>
+                </div>
+              </div>
+              <div class="connector-row" data-webhook="whatsapp">
+                <label>
+                  <span>WhatsApp Business Webhook</span>
+                  <input id="whatsappWebhook" placeholder="https://..." />
+                </label>
+                <div class="connector-foot">
+                  <button class="ghost-button test-webhook" data-webhook="whatsapp" type="button">测试连接</button>
+                  <span class="webhook-status" data-webhook-status="whatsapp">未测试</span>
+                </div>
+              </div>
+              <div class="connector-row" data-webhook="crm">
+                <label>
+                  <span>CRM 同步 Webhook</span>
+                  <input id="crmWebhook" placeholder="https://..." />
+                </label>
+                <div class="connector-foot">
+                  <button class="ghost-button test-webhook" data-webhook="crm" type="button">测试连接</button>
+                  <span class="webhook-status" data-webhook-status="crm">未测试</span>
+                </div>
+              </div>
             </section>
             <section class="panel connector-panel">
               <label>
@@ -637,6 +866,23 @@
               </label>
             </section>
           </div>
+
+          <section class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Dispatch</p>
+                <h2>Webhook 派发</h2>
+              </div>
+              <button class="primary-button" id="dispatchWebhooks" type="button">
+                <svg><use href="#icon-play" /></svg>
+                <span>派发待处理队列</span>
+              </button>
+            </div>
+            <p class="connector-hint">
+              Webhook 模式下，把待发送邮件交给发信服务、已审批 WhatsApp 交给 Business API、潜客同步到 CRM。本地模式下此按钮仅做本地模拟发送。
+            </p>
+            <div class="run-log" id="webhookLog"></div>
+          </section>
         </section>
       </main>
     </div>

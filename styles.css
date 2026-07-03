@@ -2178,3 +2178,398 @@ button.management-row.is-selected {
     bottom: 10px;
   }
 }
+
+/* ---------- 全局搜索 / 命令面板 ---------- */
+.palette-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh 16px 16px;
+  background: rgba(15, 23, 26, 0.45);
+  backdrop-filter: blur(2px);
+}
+
+.palette-overlay[hidden] {
+  display: none;
+}
+
+.palette {
+  width: min(560px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  animation: toast-in 0.2s ease;
+}
+
+.palette-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.palette-input svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+}
+
+.palette-input input {
+  flex: 1;
+  min-height: auto;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-size: 15px;
+  color: var(--ink);
+}
+
+.palette-results {
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 8px;
+  display: grid;
+  gap: 4px;
+}
+
+.palette-item {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  color: var(--ink);
+}
+
+.palette-item:hover,
+.palette-item.is-active {
+  background: var(--surface-soft);
+}
+
+.palette-item.is-active {
+  box-shadow: inset 2px 0 0 var(--teal);
+}
+
+.palette-type {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--muted);
+}
+
+.palette-label {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ---------- CRM 详情抽屉 ---------- */
+.drawer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 890;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(15, 23, 26, 0.35);
+}
+
+.drawer-overlay[hidden] {
+  display: none;
+}
+
+.drawer {
+  width: min(420px, 92vw);
+  height: 100%;
+  overflow-y: auto;
+  padding: 18px;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  animation: drawer-in 0.22s ease;
+}
+
+@keyframes drawer-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+
+.drawer-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.drawer-head h3 {
+  font-size: 17px;
+}
+
+.drawer-section-label {
+  margin: 14px 0 8px;
+}
+
+.drawer-events {
+  display: grid;
+  gap: 6px;
+}
+
+.drawer-event {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.drawer-event-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawer .detail-list select,
+.drawer .detail-list input {
+  width: 100%;
+}
+
+/* ---------- 收件箱快捷回复 ---------- */
+.quick-reply {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+  display: grid;
+  gap: 10px;
+}
+
+.quick-reply-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.segmented.small .segment {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.quick-reply textarea {
+  resize: vertical;
+}
+
+/* ---------- 深色模式 ---------- */
+body.dark {
+  --bg: #11181b;
+  --surface: #1a2226;
+  --surface-soft: #222c31;
+  --ink: #e6ecea;
+  --muted: #93a29e;
+  --line: #2e3a3f;
+  --nav: #0d1417;
+  --teal-dark: #5eead4;
+  --blue: #7ab3ff;
+  --amber: #f0b35c;
+  --red: #fb923c;
+  --green: #4ade80;
+  --shadow: 0 14px 28px rgba(0, 0, 0, 0.4);
+}
+
+body.dark .workflow-step,
+body.dark .conversation-item,
+body.dark .timeline-item,
+body.dark .relay-impact .impact-row,
+body.dark .market-row,
+body.dark .template-row,
+body.dark .outbox-item,
+body.dark .task-item,
+body.dark .log-item,
+body.dark .query-item,
+body.dark .crm-card,
+body.dark .drawer-event {
+  background: var(--surface-soft);
+  border-color: var(--line);
+}
+
+body.dark .market-row.header,
+body.dark .template-row.header {
+  background: var(--surface);
+}
+
+body.dark .conversation-item.is-active,
+body.dark .crm-column.drag-over,
+body.dark .impact-lift,
+body.dark .ghost-button.is-on {
+  background: rgba(15, 118, 110, 0.25);
+}
+
+body.dark .timeline-item.inbound {
+  background: rgba(74, 222, 128, 0.1);
+  border-color: rgba(74, 222, 128, 0.3);
+}
+
+body.dark .timeline-item.system {
+  background: rgba(240, 179, 92, 0.1);
+  border-color: rgba(240, 179, 92, 0.3);
+}
+
+body.dark .crm-card.is-overdue {
+  background: rgba(251, 146, 60, 0.12);
+  border-color: rgba(251, 146, 60, 0.35);
+}
+
+body.dark .ai-panel,
+body.dark .ai-score,
+body.dark .checklist-panel,
+body.dark .relay-bar {
+  background: linear-gradient(180deg, rgba(15, 118, 110, 0.14), var(--surface));
+  border-color: rgba(94, 234, 212, 0.25);
+}
+
+body.dark .checklist-step,
+body.dark .ai-suggestion {
+  background: var(--surface);
+  border-color: var(--line);
+}
+
+body.dark .status-pill,
+body.dark .channel-badge.whatsapp {
+  background: rgba(74, 222, 128, 0.16);
+  color: var(--green);
+}
+
+body.dark .badge,
+body.dark .channel-badge.email,
+body.dark .intent-tag.blue {
+  background: rgba(122, 179, 255, 0.16);
+  color: var(--blue);
+}
+
+body.dark .score,
+body.dark .intent-tag.amber,
+body.dark .due-tag.today,
+body.dark .due-tag.unplanned {
+  background: rgba(240, 179, 92, 0.16);
+  color: var(--amber);
+}
+
+body.dark .tag,
+body.dark .intent-tag.muted,
+body.dark .due-tag.upcoming,
+body.dark .prob-grade.grade-D {
+  background: rgba(147, 162, 158, 0.16);
+  color: var(--muted);
+}
+
+body.dark .channel-badge.relay,
+body.dark .intent-tag.red,
+body.dark .due-tag.overdue {
+  background: rgba(251, 146, 60, 0.16);
+  color: var(--red);
+}
+
+body.dark .intent-tag.teal,
+body.dark .prob-grade.grade-A,
+body.dark .step-index {
+  background: rgba(94, 234, 212, 0.16);
+  color: var(--teal-dark);
+}
+
+body.dark .prob-grade.grade-B {
+  background: rgba(122, 179, 255, 0.16);
+  color: var(--blue);
+}
+
+body.dark .prob-grade.grade-C {
+  background: rgba(240, 179, 92, 0.16);
+  color: var(--amber);
+}
+
+body.dark .workflow-step.is-waiting .step-index {
+  background: rgba(147, 162, 158, 0.14);
+  color: var(--muted);
+}
+
+body.dark input,
+body.dark select,
+body.dark textarea {
+  background: var(--surface-soft);
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+body.dark .search-box,
+body.dark .ghost-button,
+body.dark .icon-button,
+body.dark .segment {
+  background: var(--surface-soft);
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+body.dark .segment.is-active {
+  background: rgba(15, 118, 110, 0.3);
+  color: var(--teal-dark);
+}
+
+body.dark code {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--ink);
+}
+
+body.dark .prospect-row,
+body.dark .management-row,
+body.dark .mini-prospect,
+body.dark .job-card,
+body.dark .account-card,
+body.dark .approval-item,
+body.dark .pipeline-row {
+  background: var(--surface-soft);
+  border-color: var(--line);
+}
+
+body.dark .metric-card {
+  background: var(--surface-soft);
+}
+
+body.dark .analytics-kpis .metric-card.is-star {
+  background: #0f766e;
+}
+
+body.dark .whatsapp-note {
+  background: rgba(240, 179, 92, 0.1);
+  border-color: rgba(240, 179, 92, 0.3);
+  color: var(--ink);
+}
+
+body.dark .funnel-bar,
+body.dark .mini-bar,
+body.dark .rate-bar,
+body.dark .factor-bar,
+body.dark .job-progress {
+  background: rgba(255, 255, 255, 0.08);
+}

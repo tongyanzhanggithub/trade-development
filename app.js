@@ -113,7 +113,15 @@ const elements = {
   autopilotToggle: $("#autopilotToggle"),
   sendDueBtn: $("#sendDueBtn"),
   toastStack: $("#toastStack"),
-  onboardingChecklist: $("#onboardingChecklist")
+  onboardingChecklist: $("#onboardingChecklist"),
+  openPaletteBtn: $("#openPaletteBtn"),
+  themeToggle: $("#themeToggle"),
+  paletteOverlay: $("#paletteOverlay"),
+  paletteInput: $("#paletteInput"),
+  paletteResults: $("#paletteResults"),
+  crmDrawerOverlay: $("#crmDrawerOverlay"),
+  crmDrawer: $("#crmDrawer"),
+  analyticsRange: $("#analyticsRange")
 };
 
 const WEBHOOK_CONNECTORS = {
@@ -194,6 +202,7 @@ bindCampaignForm();
 bindSettingsForm();
 bindManagementForm();
 bindInboxForm();
+applyTheme();
 render();
 
 function loadState() {
@@ -289,7 +298,7 @@ function createDemoState() {
       whatsappNoReplyDays: 2
     },
     autopilot: { enabled: false, intervalSec: 8 },
-    ui: { checklistDismissed: false },
+    ui: { checklistDismissed: false, theme: "light", analyticsRange: "all" },
     management: createManagementState(campaign),
     logs: [{ id: makeId("log"), time: timestamp(), message: "示例自动化活动已生成" }]
   };
@@ -1194,6 +1203,28 @@ function renderTimeline(conversation) {
     `;
   }
 
+  const inboundList = conversation.events.filter((e) => e.kind === "inbound");
+  const activeChannel =
+    quickReplyChannels[conversation.prospectId] || inboundList[inboundList.length - 1]?.channel || "email";
+  const draft = quickReplyDrafts[conversation.prospectId] || "";
+  const quickReply = prospect
+    ? `
+      <div class="quick-reply">
+        <div class="quick-reply-head">
+          <p class="eyebrow">快捷回复</p>
+          <div class="segmented small" role="group" aria-label="回复渠道">
+            <button class="segment ${activeChannel === "email" ? "is-active" : ""}" data-reply-channel="email" type="button">邮件</button>
+            <button class="segment ${activeChannel === "whatsapp" ? "is-active" : ""}" data-reply-channel="whatsapp" type="button">WhatsApp</button>
+          </div>
+        </div>
+        <textarea id="quickReplyText" rows="3" placeholder="输入回复内容，Ctrl+Enter 发送">${escapeHtml(draft)}</textarea>
+        <div class="ai-actions">
+          <button class="primary-button" data-inbox-action="send-quick-reply" type="button"><svg><use href="#icon-mail" /></svg><span>发送回复</span></button>
+        </div>
+      </div>
+    `
+    : "";
+
   elements.inboxTimeline.innerHTML = `
     <div class="timeline-head">
       <div>
@@ -1204,6 +1235,7 @@ function renderTimeline(conversation) {
     </div>
     <div class="timeline">${events || `<div class="empty-state">暂无消息</div>`}</div>
     ${aiPanel}
+    ${quickReply}
     ${actions ? `<div class="timeline-actions">${actions}</div>` : ""}
   `;
 }
@@ -1806,22 +1838,54 @@ function simulateChannelCallbacks() {
   render();
 }
 
+function analyticsRangeMs() {
+  const range = state.ui?.analyticsRange || "all";
+  if (range === "7d") return 7 * 86400000;
+  if (range === "30d") return 30 * 86400000;
+  return null;
+}
+
+function inAnalyticsRange(ts) {
+  const ms = analyticsRangeMs();
+  if (!ms) return true;
+  return ts >= Date.now() - ms && ts <= Date.now() + 86400000;
+}
+
+function axOutbox() {
+  return state.outbox.filter((o) => inAnalyticsRange(toTime(o.sentAt || o.createdAt || o.dueDate)));
+}
+
+function axWa() {
+  return state.whatsappQueue.filter((w) => inAnalyticsRange(toTime(w.sentAt || w.createdAt || w.dueDate)));
+}
+
+function axInbound() {
+  return state.inbound.filter((m) => inAnalyticsRange(toTime(m.at || m.time)));
+}
+
+function axReplied(prospect) {
+  if (!analyticsRangeMs()) return isReplied(prospect);
+  return axInbound().some((m) => m.prospectId === prospect.id);
+}
+
 function computeFunnel() {
   const prospects = state.prospects;
+  const outbox = axOutbox();
+  const wa = axWa();
   const reached = prospects.filter(
-    (p) => state.outbox.some((o) => o.prospectId === p.id) || state.whatsappQueue.some((w) => w.prospectId === p.id)
+    (p) => outbox.some((o) => o.prospectId === p.id) || wa.some((w) => w.prospectId === p.id)
   );
   const delivered = reached.filter(
     (p) =>
-      state.outbox.some((o) => o.prospectId === p.id && o.delivered) ||
-      state.whatsappQueue.some((w) => w.prospectId === p.id && w.delivered)
+      outbox.some((o) => o.prospectId === p.id && o.delivered) ||
+      wa.some((w) => w.prospectId === p.id && w.delivered)
   );
   const opened = reached.filter(
     (p) =>
-      state.outbox.some((o) => o.prospectId === p.id && o.opened) ||
-      state.whatsappQueue.some((w) => w.prospectId === p.id && w.read)
+      outbox.some((o) => o.prospectId === p.id && o.opened) ||
+      wa.some((w) => w.prospectId === p.id && w.read)
   );
-  const replied = reached.filter(isReplied);
+  const replied = reached.filter(axReplied);
   const inquiry = prospects.filter((p) => stageIndex(p.dealStage) >= stageIndex("询盘"));
   return {
     reached: reached.length,
@@ -1833,6 +1897,12 @@ function computeFunnel() {
 }
 
 function renderAnalytics() {
+  if (elements.analyticsRange) {
+    const active = state.ui?.analyticsRange || "all";
+    elements.analyticsRange.querySelectorAll("[data-range]").forEach((segment) => {
+      segment.classList.toggle("is-active", segment.dataset.range === active);
+    });
+  }
   const funnel = computeFunnel();
   renderAnalyticsKpis(funnel);
   renderAnalyticsFunnel(funnel);
@@ -1890,13 +1960,17 @@ function renderAnalyticsFunnel(funnel) {
 
 function channelStats(channel) {
   const prospects = state.prospects;
-  const queue = channel === "email" ? state.outbox : state.whatsappQueue;
+  const queue = channel === "email" ? axOutbox() : axWa();
   const openKey = channel === "email" ? "opened" : "read";
   const has = (id) => queue.some((item) => item.prospectId === id);
   const reached = prospects.filter((p) => has(p.id));
   const delivered = reached.filter((p) => queue.some((item) => item.prospectId === p.id && item.delivered));
   const opened = reached.filter((p) => queue.some((item) => item.prospectId === p.id && item[openKey]));
-  const replied = reached.filter((p) => replyChannels(p).includes(channel));
+  const replied = reached.filter((p) =>
+    analyticsRangeMs()
+      ? axInbound().some((m) => m.prospectId === p.id && m.channel === channel)
+      : replyChannels(p).includes(channel)
+  );
   return {
     reached: reached.length,
     delivered: delivered.length,
@@ -1945,13 +2019,15 @@ function renderChannelCompare() {
 
 function renderRelayImpact() {
   const prospects = state.prospects;
-  const hasEmail = (id) => state.outbox.some((o) => o.prospectId === id);
-  const hasWa = (id) => state.whatsappQueue.some((w) => w.prospectId === id);
+  const outbox = axOutbox();
+  const wa = axWa();
+  const hasEmail = (id) => outbox.some((o) => o.prospectId === id);
+  const hasWa = (id) => wa.some((w) => w.prospectId === id);
 
   const dual = prospects.filter((p) => hasEmail(p.id) && hasWa(p.id));
   const single = prospects.filter((p) => (hasEmail(p.id) || hasWa(p.id)) && !(hasEmail(p.id) && hasWa(p.id)));
-  const dualRate = pct(dual.filter(isReplied).length, dual.length);
-  const singleRate = pct(single.filter(isReplied).length, single.length);
+  const dualRate = pct(dual.filter(axReplied).length, dual.length);
+  const singleRate = pct(single.filter(axReplied).length, single.length);
 
   let liftNote;
   if (!dual.length && !single.length) liftNote = "先触达客户并运行接力后查看对比";
@@ -1979,13 +2055,15 @@ function renderMarketPerformance() {
     return;
   }
 
+  const outbox = axOutbox();
+  const wa = axWa();
   const rows = markets
     .map((market) => {
       const list = state.prospects.filter((p) => p.market === market);
       const reached = list.filter(
-        (p) => state.outbox.some((o) => o.prospectId === p.id) || state.whatsappQueue.some((w) => w.prospectId === p.id)
+        (p) => outbox.some((o) => o.prospectId === p.id) || wa.some((w) => w.prospectId === p.id)
       ).length;
-      const replied = list.filter(isReplied).length;
+      const replied = list.filter(axReplied).length;
       const inquiry = list.filter((p) => stageIndex(p.dealStage) >= stageIndex("询盘")).length;
       return { market, touched: reached, replied, inquiry, rate: pct(replied, reached) };
     })
@@ -2012,7 +2090,7 @@ function renderMarketPerformance() {
 }
 
 function renderTemplateRank() {
-  const repliedIds = new Set(state.prospects.filter(isReplied).map((p) => p.id));
+  const repliedIds = new Set(state.prospects.filter(axReplied).map((p) => p.id));
   const buckets = new Map();
   const add = (channel, label, prospectId) => {
     const key = `${channel}|${label}`;
@@ -2022,8 +2100,8 @@ function renderTemplateRank() {
     if (repliedIds.has(prospectId)) bucket.replied.add(prospectId);
   };
 
-  state.outbox.forEach((item) => add("email", item.label, item.prospectId));
-  state.whatsappQueue.forEach((item) => add("whatsapp", item.label, item.prospectId));
+  axOutbox().forEach((item) => add("email", item.label, item.prospectId));
+  axWa().forEach((item) => add("whatsapp", item.label, item.prospectId));
 
   const rows = [...buckets.values()]
     .map((bucket) => ({
@@ -3067,6 +3145,293 @@ function renderChecklist() {
   `;
 }
 
+/* ---------- 深色模式 ---------- */
+
+function applyTheme() {
+  document.body.classList.toggle("dark", state.ui?.theme === "dark");
+}
+
+function toggleTheme() {
+  state.ui = { ...(state.ui || {}), theme: state.ui?.theme === "dark" ? "light" : "dark" };
+  applyTheme();
+  addLog(state.ui.theme === "dark" ? "已切换深色模式" : "已切换浅色模式");
+  saveState();
+  renderLogs();
+}
+
+/* ---------- 全局搜索 / 命令面板 (Ctrl+K) ---------- */
+
+let paletteItemsCache = [];
+let paletteIndex = 0;
+
+function buildPaletteItems(query) {
+  const q = query.trim().toLowerCase();
+  const items = [];
+  [
+    ["dashboard", "控制台"],
+    ["discovery", "搜索与采集"],
+    ["prospects", "潜客队列"],
+    ["email", "邮件序列"],
+    ["whatsapp", "WhatsApp 开发"],
+    ["automation", "发信与跟进队列"],
+    ["inbox", "统一收件箱"],
+    ["crm", "CRM 商机看板"],
+    ["analytics", "数据分析看板"],
+    ["management", "运营管理后台"],
+    ["settings", "自动化接口设置"]
+  ].forEach(([view, label]) => items.push({ type: "页面", label, hint: "跳转", run: () => navigateTo(view) }));
+
+  [
+    {
+      label: state.autopilot?.enabled ? "关闭自动驾驶" : "开启自动驾驶",
+      hint: "全流程自动流转",
+      run: () => setAutopilot(!state.autopilot?.enabled)
+    },
+    {
+      label: "运行跨渠道接力",
+      hint: "邮件未回转 WhatsApp",
+      run: () => {
+        navigateTo("inbox");
+        runCrossChannelRelay();
+      }
+    },
+    {
+      label: "发送今日到期邮件",
+      hint: "批量发送",
+      run: async () => {
+        await sendDueEmails();
+        saveState();
+        render();
+      }
+    },
+    {
+      label: "审批全部通过",
+      hint: "放行 WhatsApp 与 AI 草稿",
+      run: () => {
+        approveAllManagementItems();
+        saveState();
+        render();
+      }
+    },
+    { label: "切换深色/浅色模式", hint: "外观", run: toggleTheme },
+    { label: "导出全部数据 JSON", hint: "备份", run: exportJson }
+  ].forEach((action) => items.push({ type: "动作", ...action }));
+
+  state.prospects.forEach((prospect) => {
+    items.push({
+      type: "客户",
+      label: prospect.company,
+      hint: `${prospect.market} · ${prospect.dealStage || prospect.status}`,
+      run: () => {
+        state.selectedProspectId = prospect.id;
+        state.selectedConversationId = prospect.id;
+        saveState();
+        render();
+        navigateTo("prospects");
+      }
+    });
+    items.push({
+      type: "会话",
+      label: `${prospect.company} 的会话`,
+      hint: "打开收件箱时间线",
+      run: () => {
+        state.selectedConversationId = prospect.id;
+        saveState();
+        render();
+        navigateTo("inbox");
+      }
+    });
+  });
+
+  if (!q) return items.slice(0, 12);
+  return items.filter((item) => `${item.type} ${item.label} ${item.hint}`.toLowerCase().includes(q)).slice(0, 12);
+}
+
+function renderPalette() {
+  paletteItemsCache = buildPaletteItems(elements.paletteInput.value);
+  paletteIndex = Math.min(paletteIndex, Math.max(0, paletteItemsCache.length - 1));
+  elements.paletteResults.innerHTML = paletteItemsCache.length
+    ? paletteItemsCache
+        .map(
+          (item, index) => `
+            <button class="palette-item ${index === paletteIndex ? "is-active" : ""}" data-palette-index="${index}" type="button">
+              <span class="palette-type">${item.type}</span>
+              <span class="palette-label">${escapeHtml(item.label)}</span>
+              <span class="palette-hint">${escapeHtml(item.hint || "")}</span>
+            </button>
+          `
+        )
+        .join("")
+    : `<div class="empty-state">无匹配结果</div>`;
+}
+
+function openPalette() {
+  elements.paletteOverlay.hidden = false;
+  elements.paletteInput.value = "";
+  paletteIndex = 0;
+  renderPalette();
+  elements.paletteInput.focus();
+}
+
+function closePalette() {
+  elements.paletteOverlay.hidden = true;
+}
+
+function runPaletteItem(index) {
+  const item = paletteItemsCache[index];
+  if (!item) return;
+  closePalette();
+  item.run();
+}
+
+/* ---------- CRM 详情抽屉 ---------- */
+
+let crmDrawerProspectId = null;
+
+function openCrmDrawer(prospectId) {
+  crmDrawerProspectId = prospectId;
+  renderCrmDrawer();
+  elements.crmDrawerOverlay.hidden = false;
+}
+
+function closeCrmDrawer() {
+  elements.crmDrawerOverlay.hidden = true;
+  crmDrawerProspectId = null;
+}
+
+function renderCrmDrawer() {
+  const prospect = state.prospects.find((p) => p.id === crmDrawerProspectId);
+  if (!prospect) {
+    closeCrmDrawer();
+    return;
+  }
+  const conversation = buildConversations().find((c) => c.prospectId === prospect.id);
+  const events = (conversation?.events || []).slice(-5).reverse();
+  elements.crmDrawer.innerHTML = `
+    <div class="drawer-head">
+      <div>
+        <h3>${escapeHtml(prospect.company)}</h3>
+        <p class="conv-sub">${escapeHtml(prospect.market)} · ${escapeHtml(prospect.contactName)} · ${escapeHtml(prospect.role)}</p>
+      </div>
+      <button class="icon-button" data-drawer-close type="button" aria-label="关闭">
+        <svg><use href="#icon-x" /></svg>
+      </button>
+    </div>
+    <dl class="detail-list">
+      <div><dt>邮箱</dt><dd>${escapeHtml(prospect.email || "待补全")} · ${escapeHtml(prospect.emailStatus || "")}</dd></div>
+      <div><dt>WhatsApp</dt><dd>${escapeHtml(prospect.phone || "待查找")}</dd></div>
+      <div><dt>商机阶段</dt><dd>
+        <select id="drawerStage">${DEAL_STAGES.map((s) => `<option ${s === prospect.dealStage ? "selected" : ""}>${s}</option>`).join("")}</select>
+      </dd></div>
+      <div><dt>预估金额 ($)</dt><dd><input id="drawerValue" type="number" min="0" step="100" value="${prospect.dealValue || 0}" /></dd></div>
+    </dl>
+    ${renderLeadScorePanel(prospect)}
+    <p class="eyebrow drawer-section-label">最近动态</p>
+    <div class="drawer-events">
+      ${
+        events
+          .map(
+            (e) => `
+              <div class="drawer-event">
+                <span class="tag">${e.kind === "inbound" ? "回复" : e.channel === "whatsapp" ? "WA" : "邮件"}</span>
+                <span class="drawer-event-text">${escapeHtml((e.title ? `${e.title}：` : "") + (e.body || "").replace(/\s+/g, " ")).slice(0, 64)}</span>
+              </div>
+            `
+          )
+          .join("") || `<div class="empty-state">暂无动态</div>`
+      }
+    </div>
+    <div class="timeline-actions">
+      <button class="ghost-button" data-drawer-goto="inbox" type="button"><svg><use href="#icon-inbox" /></svg><span>打开会话</span></button>
+      <button class="ghost-button" data-drawer-goto="prospects" type="button"><svg><use href="#icon-users" /></svg><span>潜客详情</span></button>
+    </div>
+  `;
+}
+
+/* ---------- 收件箱快捷回复 ---------- */
+
+const quickReplyDrafts = {};
+const quickReplyChannels = {};
+
+async function sendQuickReply(prospectId, channel, text) {
+  const prospect = state.prospects.find((p) => p.id === prospectId);
+  const body = (text || "").trim();
+  if (!prospect || !body) {
+    addLog("回复内容为空，未发送");
+    return;
+  }
+
+  if (channel === "whatsapp") {
+    if (!prospect.phone) {
+      addLog(`无法发送：${prospect.company} 没有 WhatsApp 号码`);
+      return;
+    }
+    const item = {
+      id: makeId("waq"),
+      prospectId,
+      company: prospect.company,
+      phone: prospect.phone,
+      label: "手动回复",
+      message: body,
+      dueDate: dateOffset(0),
+      createdAt: new Date().toISOString(),
+      status: "已审批",
+      step: `手动回复-${state.whatsappQueue.length}`,
+      reply: true,
+      url: buildWhatsappUrl(prospect, body)
+    };
+    state.whatsappQueue.push(item);
+    if (state.settings.mode === "webhook" && (state.settings.whatsappWebhook || "").trim()) {
+      const result = await callWebhook("whatsapp", { messages: [item] });
+      if (result.ok) {
+        item.status = "已发送";
+        item.sentAt = new Date().toISOString();
+        item.delivered = true;
+      }
+    } else {
+      item.status = "已发送";
+      item.sentAt = new Date().toISOString();
+      item.delivered = true;
+    }
+    addLog(`已发送 WhatsApp 回复：${prospect.company}`);
+  } else {
+    if (!prospect.email) {
+      addLog(`无法发送：${prospect.company} 没有邮箱`);
+      return;
+    }
+    const item = {
+      id: makeId("outbox"),
+      prospectId,
+      company: prospect.company,
+      email: prospect.email,
+      label: "手动回复",
+      subject: `Re: ${state.campaign.product}`,
+      body,
+      dueDate: dateOffset(0),
+      createdAt: new Date().toISOString(),
+      status: "待发送",
+      step: `手动回复-${state.outbox.length}`,
+      reply: true
+    };
+    state.outbox.push(item);
+    if (state.settings.mode === "webhook" && (state.settings.sendWebhook || "").trim()) {
+      const result = await callWebhook("send", { emails: [item] });
+      if (result.ok) {
+        item.status = "已发送";
+        item.sentAt = new Date().toISOString();
+        item.delivered = true;
+      }
+    } else {
+      deliverEmail(item);
+    }
+    addLog(`已发送邮件回复：${prospect.company}`);
+  }
+
+  delete quickReplyDrafts[prospectId];
+  saveState();
+  render();
+}
+
 function normalizeRemoteProspects(items) {
   return items.map((item, index) => ({
     id: item.id || makeId("prospect"),
@@ -4049,6 +4414,100 @@ elements.sendDueBtn.addEventListener("click", async () => {
   render();
 });
 
+elements.themeToggle.addEventListener("click", toggleTheme);
+elements.openPaletteBtn.addEventListener("click", openPalette);
+
+document.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    if (elements.paletteOverlay.hidden) openPalette();
+    else closePalette();
+    return;
+  }
+  if (!elements.paletteOverlay.hidden) {
+    if (event.key === "Escape") {
+      closePalette();
+    } else if (event.key === "ArrowDown") {
+      event.preventDefault();
+      paletteIndex = Math.min(paletteIndex + 1, Math.max(0, paletteItemsCache.length - 1));
+      renderPalette();
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      paletteIndex = Math.max(paletteIndex - 1, 0);
+      renderPalette();
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      runPaletteItem(paletteIndex);
+    }
+    return;
+  }
+  if (event.key === "Escape" && !elements.crmDrawerOverlay.hidden) closeCrmDrawer();
+});
+
+elements.paletteInput.addEventListener("input", () => {
+  paletteIndex = 0;
+  renderPalette();
+});
+
+elements.paletteResults.addEventListener("click", (event) => {
+  const item = event.target.closest("[data-palette-index]");
+  if (item) runPaletteItem(Number(item.dataset.paletteIndex));
+});
+
+elements.paletteOverlay.addEventListener("click", (event) => {
+  if (event.target === elements.paletteOverlay) closePalette();
+});
+
+elements.analyticsRange.addEventListener("click", (event) => {
+  const segment = event.target.closest("[data-range]");
+  if (!segment) return;
+  state.ui = { ...(state.ui || {}), analyticsRange: segment.dataset.range };
+  saveState();
+  renderAnalytics();
+});
+
+elements.crmBoard.addEventListener("click", (event) => {
+  const card = event.target.closest(".crm-card[data-prospect-id]");
+  if (card) openCrmDrawer(card.dataset.prospectId);
+});
+
+elements.crmDrawerOverlay.addEventListener("click", (event) => {
+  if (event.target === elements.crmDrawerOverlay) {
+    closeCrmDrawer();
+    return;
+  }
+  if (event.target.closest("[data-drawer-close]")) {
+    closeCrmDrawer();
+    return;
+  }
+  const gotoBtn = event.target.closest("[data-drawer-goto]");
+  if (gotoBtn && crmDrawerProspectId) {
+    state.selectedProspectId = crmDrawerProspectId;
+    state.selectedConversationId = crmDrawerProspectId;
+    saveState();
+    render();
+    navigateTo(gotoBtn.dataset.drawerGoto);
+    closeCrmDrawer();
+  }
+});
+
+elements.crmDrawerOverlay.addEventListener("change", (event) => {
+  const prospect = state.prospects.find((p) => p.id === crmDrawerProspectId);
+  if (!prospect) return;
+  if (event.target.id === "drawerStage") {
+    prospect.dealStage = event.target.value;
+    addLog(`商机推进：${prospect.company} → ${prospect.dealStage}`);
+    saveState();
+    render();
+    renderCrmDrawer();
+  } else if (event.target.id === "drawerValue") {
+    prospect.dealValue = Math.max(0, Number(event.target.value) || 0);
+    saveState();
+    render();
+    renderCrmDrawer();
+  }
+});
+
 elements.crmBoard.addEventListener("dragstart", (event) => {
   const card = event.target.closest("[data-prospect-id]");
   if (!card) return;
@@ -4090,11 +4549,40 @@ elements.crmBoard.addEventListener("drop", (event) => {
   render();
 });
 
+elements.inboxTimeline.addEventListener("input", (event) => {
+  if (event.target.id === "quickReplyText") {
+    quickReplyDrafts[state.selectedConversationId] = event.target.value;
+  }
+});
+
+elements.inboxTimeline.addEventListener("keydown", (event) => {
+  if (event.target.id === "quickReplyText" && event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    const channel =
+      document.querySelector(".quick-reply [data-reply-channel].is-active")?.dataset.replyChannel || "email";
+    sendQuickReply(state.selectedConversationId, channel, event.target.value);
+  }
+});
+
 elements.inboxTimeline.addEventListener("click", async (event) => {
+  const channelBtn = event.target.closest("[data-reply-channel]");
+  if (channelBtn) {
+    quickReplyChannels[state.selectedConversationId] = channelBtn.dataset.replyChannel;
+    renderInbox();
+    return;
+  }
   const action = event.target.closest("[data-inbox-action]")?.dataset.inboxAction;
   if (!action) return;
   const prospectId = state.selectedConversationId;
   const prospect = state.prospects.find((item) => item.id === prospectId);
+
+  if (action === "send-quick-reply") {
+    const textEl = document.querySelector("#quickReplyText");
+    const channel =
+      document.querySelector(".quick-reply [data-reply-channel].is-active")?.dataset.replyChannel || "email";
+    sendQuickReply(prospectId, channel, textEl?.value || "");
+    return;
+  }
 
   if (action === "copy-suggestion") {
     const suggestion = getSuggestionForConversation(prospectId);

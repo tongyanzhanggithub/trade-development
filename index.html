@@ -87,6 +87,13 @@
         <path d="M16 16v-6" />
         <path d="M20 16v-9" />
       </symbol>
+      <symbol id="icon-moon" viewBox="0 0 24 24">
+        <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" />
+      </symbol>
+      <symbol id="icon-x" viewBox="0 0 24 24">
+        <path d="m6 6 12 12" />
+        <path d="M18 6 6 18" />
+      </symbol>
     </svg>
 
     <div class="app-shell">
@@ -157,6 +164,12 @@
             <h1>自动化外贸开发系统</h1>
           </div>
           <div class="topbar-actions">
+            <button class="icon-button" id="openPaletteBtn" type="button" aria-label="全局搜索" title="全局搜索客户、页面、动作 (Ctrl+K)">
+              <svg><use href="#icon-search" /></svg>
+            </button>
+            <button class="icon-button" id="themeToggle" type="button" aria-label="切换深色模式" title="深色 / 浅色模式">
+              <svg><use href="#icon-moon" /></svg>
+            </button>
             <button class="icon-button" id="exportJson" type="button" aria-label="导出全部数据" title="导出全部数据">
               <svg><use href="#icon-download" /></svg>
             </button>
@@ -582,6 +595,11 @@
               <h2 id="analyticsTitle">数据分析看板</h2>
             </div>
             <div class="topbar-actions">
+              <div class="segmented" role="group" aria-label="时间范围" id="analyticsRange">
+                <button class="segment is-active" data-range="all" type="button">全部</button>
+                <button class="segment" data-range="7d" type="button">近7天</button>
+                <button class="segment" data-range="30d" type="button">近30天</button>
+              </div>
               <button class="ghost-button" id="simulateCallbacks" type="button">
                 <svg><use href="#icon-play" /></svg>
                 <span>模拟送达/打开回传</span>
@@ -898,6 +916,20 @@
           </section>
         </section>
       </main>
+    </div>
+
+    <div class="palette-overlay" id="paletteOverlay" hidden>
+      <div class="palette" role="dialog" aria-modal="true" aria-label="全局搜索">
+        <label class="palette-input">
+          <svg><use href="#icon-search" /></svg>
+          <input id="paletteInput" placeholder="搜索客户、页面、动作…（↑↓ 选择，Enter 执行，Esc 关闭）" autocomplete="off" />
+        </label>
+        <div class="palette-results" id="paletteResults"></div>
+      </div>
+    </div>
+
+    <div class="drawer-overlay" id="crmDrawerOverlay" hidden>
+      <aside class="drawer" id="crmDrawer" role="dialog" aria-modal="true" aria-label="客户详情"></aside>
     </div>
 
     <div class="toast-stack" id="toastStack" aria-live="polite"></div>

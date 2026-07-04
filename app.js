@@ -1,4 +1,4 @@
-window.__APP_V = "31";
+window.__APP_V = "32";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -85,7 +85,6 @@ const elements = {
   ruleScoreThreshold: $("#ruleScoreThreshold"),
   ruleCooldownDays: $("#ruleCooldownDays"),
   ruleRequireApproval: $("#ruleRequireApproval"),
-  pipelineManager: $("#pipelineManager"),
   saveSettings: $("#saveSettings"),
   localMode: $("#localMode"),
   webhookMode: $("#webhookMode"),
@@ -2147,7 +2146,11 @@ function computeFunnel() {
   );
   const replied = reached.filter(axReplied);
   const inquiry = prospects.filter((p) => stageIndex(p.dealStage) >= stageIndex("询盘"));
+  // 前段获客阶段（合并原「线索阶段漏斗」）：线索总数 → 有联系方式
+  const contactable = prospects.filter((p) => emailLooksValid(p.email) || p.phone);
   return {
+    total: prospects.length,
+    contactable: contactable.length,
     reached: reached.length,
     delivered: delivered.length,
     opened: opened.length,
@@ -2249,14 +2252,17 @@ function renderAnalyticsKpis(funnel) {
 }
 
 function renderAnalyticsFunnel(funnel) {
+  // 全流程漏斗：从线索获取到最终询盘，合并了原管理页的「线索阶段漏斗」
   const stages = [
-    ["触达", funnel.reached],
+    ["线索", funnel.total],
+    ["有联系方式", funnel.contactable],
+    ["已入队/触达", funnel.reached],
     ["送达", funnel.delivered],
     ["打开", funnel.opened],
     ["回复", funnel.replied],
     ["询盘", funnel.inquiry]
   ];
-  const top = Math.max(1, funnel.reached);
+  const top = Math.max(1, funnel.total);
   elements.analyticsFunnel.innerHTML = stages
     .map(([label, count], index) => {
       const width = Math.max(3, Math.round((count / top) * 100));
@@ -2478,7 +2484,6 @@ function renderManagement() {
   renderJobBoard();
   renderApprovalCenter();
   renderAccountManager();
-  renderPipelineManager();
 }
 
 // 按活动实时统计（线索按 campaignId 归属，队列/回复据其线索反查）
@@ -2671,24 +2676,6 @@ function renderAccountManager() {
           <div class="job-progress"><span style="width:${usage}%"></span></div>
           <span>${hasQuota ? `今日 ${account.used}/${account.limit}` : "—"}</span>
         </article>
-      `;
-    })
-    .join("");
-}
-
-function renderPipelineManager() {
-  const stages = ["新发现", "待审核", "已审核", "已丰富", "邮箱有效", "已入队", "已回复"];
-  const maxCount = Math.max(1, ...stages.map((stage) => state.prospects.filter((item) => item.status === stage).length));
-  elements.pipelineManager.innerHTML = stages
-    .map((stage) => {
-      const count = state.prospects.filter((item) => item.status === stage).length;
-      const width = Math.max(6, Math.round((count / maxCount) * 100));
-      return `
-        <div class="pipeline-row">
-          <span>${stage}</span>
-          <div class="job-progress"><span style="width:${width}%"></span></div>
-          <strong>${count}</strong>
-        </div>
       `;
     })
     .join("");

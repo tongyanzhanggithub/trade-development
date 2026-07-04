@@ -1,4 +1,4 @@
-window.__APP_V = "24";
+window.__APP_V = "26";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -59,6 +59,7 @@ const elements = {
   queueWhatsapp: $("#queueWhatsapp"),
   whatsappSequenceGrid: $("#whatsappSequenceGrid"),
   simulateSend: $("#simulateSend"),
+  queueFollowups: $("#queueFollowups"),
   scheduleFollowups: $("#scheduleFollowups"),
   exportOutbox: $("#exportOutbox"),
   outboxList: $("#outboxList"),
@@ -111,6 +112,7 @@ const elements = {
   scheduleFollowupsCrm: $("#scheduleFollowupsCrm"),
   exportCrm: $("#exportCrm"),
   analyticsKpis: $("#analyticsKpis"),
+  analyticsInsight: $("#analyticsInsight"),
   analyticsFunnel: $("#analyticsFunnel"),
   channelCompare: $("#channelCompare"),
   relayImpact: $("#relayImpact"),
@@ -950,12 +952,16 @@ function renderWhatsappSequence() {
 }
 
 function renderOutbox() {
+  if (elements.queueFollowups) {
+    const dueN = dueFollowupProspects().length;
+    elements.queueFollowups.querySelector("span").textContent = dueN ? `一键批量跟进 (${dueN})` : "一键批量跟进";
+  }
   if (!state.outbox.length) {
     elements.outboxList.innerHTML = `<div class="empty-state">暂无发信队列<button class="ghost-button" data-goto="prospects" type="button">去挑选潜客 →</button></div>`;
     return;
   }
 
-  const items = [...state.outbox].sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+  const items = [...state.outbox].sort((a, b) => (a.dueDate || "").localeCompare(b.dueDate || ""));
   const pending = items.filter((i) => ["待发送", "待审批"].includes(i.status));
   const passCount = pending.filter((i) => preflightOutboxItem(i).ok).length;
   const blockCount = pending.length - passCount;
@@ -2105,12 +2111,67 @@ function renderAnalytics() {
     });
   }
   const funnel = computeFunnel();
+  renderAnalyticsInsight(funnel);
   renderAnalyticsKpis(funnel);
   renderAnalyticsFunnel(funnel);
   renderChannelCompare();
   renderRelayImpact();
   renderMarketPerformance();
   renderTemplateRank();
+}
+
+// 效果闭环提示：把"哪个市场/话术回复率最高 + 有多少客户该跟进"变成一句可执行结论
+function renderAnalyticsInsight(funnel) {
+  if (!elements.analyticsInsight) return;
+  const outbox = axOutbox();
+  const wa = axWa();
+
+  // 回复率最高的市场（至少触达 2 家才纳入，避免小样本噪音）
+  const markets = [...new Set(state.prospects.map((p) => p.market))];
+  const marketStats = markets
+    .map((market) => {
+      const list = state.prospects.filter((p) => p.market === market);
+      const reached = list.filter((p) => outbox.some((o) => o.prospectId === p.id) || wa.some((w) => w.prospectId === p.id)).length;
+      const replied = list.filter(axReplied).length;
+      return { market, reached, replied, rate: pct(replied, reached) };
+    })
+    .filter((m) => m.reached >= 2)
+    .sort((a, b) => b.rate - a.rate || b.replied - a.replied);
+  const bestMarket = marketStats[0];
+
+  // 回复率最高的话术
+  const repliedIds = new Set(state.prospects.filter(axReplied).map((p) => p.id));
+  const buckets = new Map();
+  [...outbox, ...wa].forEach((item) => {
+    if (!buckets.has(item.label)) buckets.set(item.label, { recipients: new Set(), replied: new Set() });
+    const b = buckets.get(item.label);
+    b.recipients.add(item.prospectId);
+    if (repliedIds.has(item.prospectId)) b.replied.add(item.prospectId);
+  });
+  const scriptStats = [...buckets.entries()]
+    .map(([label, b]) => ({ label, sent: b.recipients.size, replied: b.replied.size, rate: pct(b.replied.size, b.recipients.size) }))
+    .filter((s) => s.sent >= 2)
+    .sort((a, b) => b.rate - a.rate || b.sent - a.sent);
+  const bestScript = scriptStats[0];
+
+  const dueN = dueFollowupProspects().length;
+
+  const parts = [];
+  if (bestMarket) parts.push(`回复率最高的市场：<strong>${escapeHtml(bestMarket.market)}</strong>（${bestMarket.rate}%，${bestMarket.replied}/${bestMarket.reached}）`);
+  if (bestScript) parts.push(`最有效话术：<strong>${escapeHtml(bestScript.label)}</strong>（${bestScript.rate}%）`);
+
+  if (!parts.length && !dueN) {
+    elements.analyticsInsight.innerHTML = `<span class="insight-hint">先触达并积累回复数据，这里会告诉你哪个市场/话术成功率最高，以及该给谁发跟进。</span>`;
+    return;
+  }
+
+  const action = dueN
+    ? `<button class="primary-button" id="insightFollowup" type="button"><svg><use href="#icon-shuffle" /></svg><span>一键批量跟进 (${dueN})</span></button>`
+    : "";
+  elements.analyticsInsight.innerHTML = `
+    <div class="insight-text">💡 ${parts.join(" · ") || "已有触达数据"}${dueN ? ` · <strong>${dueN}</strong> 位客户到期未回复，该跟进了` : ""}</div>
+    ${action}
+  `;
 }
 
 function renderAnalyticsKpis(funnel) {
@@ -5378,6 +5439,64 @@ function queueQualityLeads() {
   return ordered.length;
 }
 
+// 该跟进的客户：已发过至少一封、超过跟进间隔仍未回复、未退订、当前没有待发邮件
+function dueFollowupProspects() {
+  const followupDays = state.management?.rules?.followupDays || 3;
+  return state.prospects.filter((p) => {
+    if (p.optOut) return false;
+    if (p.status === "已回复" || axReplied(p)) return false;
+    const mine = state.outbox.filter((o) => o.prospectId === p.id);
+    const sent = mine.filter((o) => o.status === "已发送");
+    if (!sent.length) return false; // 还没发过首封，交给一键起量/入队
+    if (mine.some((o) => ["待发送", "待审批"].includes(o.status))) return false; // 已有待发的后续
+    const lastSentMs = Math.max(...sent.map((o) => toTime(o.sentAt || o.createdAt)));
+    if (daysSinceMs(lastSentMs) < followupDays) return false;
+    // 序列里还有没发过的后续邮件
+    const seq = buildEmailSequence(state.campaign, p);
+    return seq.some((e) => !mine.some((o) => (o.step || o.label) === e.label));
+  });
+}
+
+// 一键批量跟进：给到期未回复的客户排下一封跟进邮件（待审批发送）
+function queueDueFollowups() {
+  const due = dueFollowupProspects();
+  if (!due.length) {
+    addLog("暂无到期该跟进的客户（需已发过首封、超过跟进间隔且仍未回复）");
+    saveState();
+    render();
+    return 0;
+  }
+  const today = dateOffset(0);
+  const companies = [];
+  due.forEach((p) => {
+    const mine = state.outbox.filter((o) => o.prospectId === p.id);
+    const seq = buildEmailSequence(state.campaign, p);
+    const next = seq.find((e) => !mine.some((o) => (o.step || o.label) === e.label));
+    if (!next) return;
+    state.outbox.push({
+      id: makeId("outbox"),
+      prospectId: p.id,
+      company: p.company,
+      email: p.email,
+      label: next.label,
+      subject: next.subject,
+      body: next.body,
+      dueDate: today,
+      createdAt: new Date().toISOString(),
+      status: "待发送",
+      step: next.label
+    });
+    companies.push(p.company);
+  });
+  addLog(
+    `已为 ${companies.length} 位到期未回复客户排下一封跟进（待你审批发送）：${companies.slice(0, 3).join("、")}${companies.length > 3 ? " 等" : ""}`
+  );
+  navigateTo("automation");
+  saveState();
+  render();
+  return companies.length;
+}
+
 function queueTopWhatsappProspects() {
   const limit = Math.min(state.campaign.dailyLimit, state.management.rules.whatsappDailyLimit, 8);
   const candidates = [...state.prospects]
@@ -6416,6 +6535,16 @@ elements.scheduleFollowups.addEventListener("click", () => {
   saveState();
   render();
 });
+
+if (elements.queueFollowups) {
+  elements.queueFollowups.addEventListener("click", () => queueDueFollowups());
+}
+
+if (elements.analyticsInsight) {
+  elements.analyticsInsight.addEventListener("click", (event) => {
+    if (event.target.closest("#insightFollowup")) queueDueFollowups();
+  });
+}
 
 elements.exportOutbox.addEventListener("click", exportOutbox);
 elements.exportWhatsappQueue.addEventListener("click", exportWhatsappQueue);

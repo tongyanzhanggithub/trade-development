@@ -809,6 +809,38 @@ button.prospect-row.is-selected {
   color: #b42318;
 }
 
+.insight-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: linear-gradient(120deg, #f4f9ff, #fbfaf5);
+}
+
+.insight-banner:empty {
+  display: none;
+}
+
+.insight-banner .insight-text {
+  flex: 1;
+  min-width: 220px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.insight-banner .insight-hint {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.insight-banner .primary-button {
+  flex-shrink: 0;
+}
+
 .outbox-item strong,
 .outbox-item span,
 .task-item strong,

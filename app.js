@@ -1,4 +1,4 @@
-window.__APP_V = "11";
+window.__APP_V = "13";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -235,7 +235,8 @@ bindSettingsForm();
 bindManagementForm();
 bindInboxForm();
 applyTheme();
-render();
+// 首次 render() 移到文件末尾执行——render 会读取本文件后段定义的模块级 const
+// （Agent/风险/意图字典等），在此处调用会因这些 const 尚未初始化而 TDZ 崩溃。
 
 function loadState() {
   const saved = localStorage.getItem(STORAGE_KEY);
@@ -1248,14 +1249,34 @@ function renderTimeline(conversation) {
       !stored && aiEnabled()
         ? `<button class="ghost-button" data-inbox-action="ai-analyze" type="button"><svg><use href="#icon-zap" /></svg><span>用 Claude 分析</span></button>`
         : "";
+    const risks = conversationRisks(conversation.prospectId);
+    const riskBlock = risks.length
+      ? `
+        <div class="risk-block risk-${highestRiskLevel(risks)}">
+          <p class="eyebrow">⚠️ 风险提示 · ${risks.length} 项</p>
+          ${risks
+            .map(
+              (r) => `
+              <div class="risk-item">
+                <span class="intent-tag ${riskLevelTone(r.level)}">${r.level === "high" ? "高" : r.level === "medium" ? "中" : "低"} · ${escapeHtml(r.category)}</span>
+                <div class="risk-detail"><strong>${escapeHtml(r.evidence)}</strong><span>应对：${escapeHtml(r.action)}</span></div>
+              </div>
+            `
+            )
+            .join("")}
+        </div>
+      `
+      : "";
     aiPanel = `
       <div class="ai-panel">
         <div class="ai-panel-head">
           <span class="ai-badge">AI 助手</span>
           <span class="intent-tag ${intent.tone}">意图：${escapeHtml(intentLabel)} · 置信度 ${confidence}%</span>
+          ${risks.length ? `<span class="intent-tag ${riskLevelTone(highestRiskLevel(risks))}">⚠️ ${risks.length} 项风险</span>` : ""}
           ${sourceTag}
         </div>
         <p class="ai-summary">${escapeHtml(summary)}</p>
+        ${riskBlock}
         <p class="eyebrow">建议回复（${replyChannel === "whatsapp" ? "WhatsApp" : "邮件"}）</p>
         <div class="ai-suggestion" id="aiSuggestion">${escapeHtml(suggestion)}</div>
         <div class="ai-actions">
@@ -2536,7 +2557,7 @@ function buildCustomerSearchTerms(customerType) {
   return { buyers: '"importer" OR "distributor" OR "wholesaler" OR "stockist"' };
 }
 
-function generateProspects(campaign, targetCount = 18) {
+function generateProspects(campaign, targetCount = 18, salt = "") {
   const markets = normalizeMarkets(campaign.markets);
   const productNoun = getProductNoun(campaign.product);
   const perMarket = Math.max(4, Math.ceil(targetCount / Math.max(markets.length, 1)));
@@ -2550,7 +2571,7 @@ function generateProspects(campaign, targetCount = 18) {
       const source = sourceChannels[(index + marketIndex) % sourceChannels.length];
       const prefix = prefixes[(index + marketIndex * 2) % prefixes.length];
       const suffix = suffixes[(index + marketIndex) % suffixes.length];
-      const company = `${prefix} ${capitalize(productNoun)} ${suffix}`;
+      const company = `${prefix} ${capitalize(productNoun)} ${suffix}${salt ? ` ${salt}` : ""}`;
       const domain = makeDomain(company, market);
       const query = `${campaign.product} ${market} ${campaign.customerType}`;
       prospects.push({
@@ -3115,6 +3136,12 @@ async function autopilotTick() {
   if (!state.autopilot?.enabled) return;
   const actions = [];
 
+  // 0) Agent 周期任务：到周期自动补充一批新线索
+  if (agentCycleDue()) {
+    const added = await agentRunCycle(false);
+    if (added) actions.push(`周期补量 ${added} 家`);
+  }
+
   // 1) 新线索自动补全 + 验证
   const raw = state.prospects.filter((p) => ["新发现", "待审核"].includes(p.status));
   if (raw.length) {
@@ -3606,9 +3633,27 @@ const AI_ANALYSIS_SCHEMA = {
     confidence: { type: "integer", description: "0-100 的置信度" },
     summary: { type: "string", description: "一句中文摘要：客户处境 + 最新诉求" },
     next_action: { type: "string", description: "给业务员的中文下一步建议，一句话" },
-    suggested_reply: { type: "string", description: "可直接发送的英文回复全文，含称呼与署名" }
+    suggested_reply: { type: "string", description: "可直接发送的英文回复全文，含称呼与署名" },
+    risks: {
+      type: "array",
+      description: "客户来信中的风险事项，没有则空数组",
+      items: {
+        type: "object",
+        properties: {
+          level: { type: "string", enum: ["high", "medium", "low"] },
+          category: {
+            type: "string",
+            description: "风险类别中文，如 付款风险 / 疑似诈骗 / 制裁合规 / 知识产权 / 利润风险 / 样品滥用"
+          },
+          evidence: { type: "string", description: "来信中触发该风险的原话或依据（中文说明）" },
+          action: { type: "string", description: "给业务员的应对建议，一句话" }
+        },
+        required: ["level", "category", "evidence", "action"],
+        additionalProperties: false
+      }
+    }
   },
-  required: ["intent", "intent_label", "confidence", "summary", "next_action", "suggested_reply"],
+  required: ["intent", "intent_label", "confidence", "summary", "next_action", "suggested_reply", "risks"],
   additionalProperties: false
 };
 
@@ -3654,7 +3699,7 @@ async function analyzeConversationAI(prospectId) {
     .join("\n---\n");
 
   const system =
-    "你是资深外贸业务助手。根据对话判断客户最新意图并起草回复。suggested_reply 必须是英文、专业、简洁、可直接发送；其余字段用中文。";
+    "你是资深外贸业务与风控助手。根据对话判断客户最新意图并起草回复，同时识别来信中的风险事项（付款风险如先货后款/纯账期/无定金、疑似诈骗如大额急单+异地收货+第三方货代、制裁合规如受限地区/再出口、知识产权如仿制贴牌、利润风险如目标价远低于成本、样品滥用等），没有风险则 risks 为空数组。suggested_reply 必须是英文、专业、简洁、可直接发送；其余字段用中文。";
   const user = `我方产品: ${state.campaign.product}
 卖点: ${state.campaign.valueProps}
 认证: ${state.campaign.certifications}
@@ -3675,12 +3720,111 @@ async function enrichInboundWithAI(prospectId, force = false) {
     const result = await analyzeConversationAI(prospectId);
     if (!result) return;
     message.ai = { ...result, model: state.settings.aiModel, at: Date.now() };
-    addLog(`Claude 分析完成（${result.intent_label} · 置信度 ${result.confidence}%）：${message.company}`);
+    const riskNote = result.risks?.length ? `，⚠️ ${result.risks.length} 项风险` : "";
+    addLog(`Claude 分析完成（${result.intent_label} · 置信度 ${result.confidence}%${riskNote}）：${message.company}`);
     saveState();
     render();
   } catch (error) {
     addLog(`Claude 分析失败，已用本地规则兜底：${error.message}`);
   }
+}
+
+/* ---------- 客户回信风险识别（本地规则 + Claude 双引擎） ---------- */
+
+const RISK_RULES = [
+  {
+    level: "high",
+    category: "付款风险",
+    test: /pay(ment)? (after|on) (delivery|arrival|receipt)|open account\b|\boa\b|net ?\d{2,3}\b|no deposit|without deposit|credit terms|货到付款|先货后款|无需?定金|不付定金|纯账期|全额账期/i,
+    evidence: "客户要求先货后款 / 纯账期 / 无定金",
+    action: "坚持定金+尾款或 L/C，先核实客户资信与营业执照"
+  },
+  {
+    level: "high",
+    category: "疑似诈骗",
+    test: /freight collect|my (shipping|forwarder|freight|agent) will (pick|arrange|handle|collect)|our (agent|forwarder) will contact you|western union|moneygram|ship (it |them )?to (a )?(different|another) (address|country)|deliver to nigeria|大额.*(急|马上|立刻)|异地收货|指定货代来提/i,
+    evidence: "大额急单 / 第三方货代提货 / 异地收货等异常安排",
+    action: "视频核实公司真实性，核对收货地址与注册地是否一致，先收定金"
+  },
+  {
+    level: "medium",
+    category: "制裁 / 合规",
+    test: /\b(iran|syria|north korea|dprk|crimea|cuba|sanction)\b|re-?export|end.?use[r]? (certificate|statement)|military use|defen[cs]e (project|ministry)|受限地区|再出口|军工|最终用户/i,
+    evidence: "涉及受限地区 / 再出口 / 军事或最终用户敏感用途",
+    action: "启动出口管制合规审查，索取最终用户证明，必要时拒单"
+  },
+  {
+    level: "medium",
+    category: "知识产权",
+    test: /replica|counterfeit|\b1:1\b|same as (nike|adidas|apple|dyson|lego|disney)|copy (of )?(the )?(brand|logo|design)|put (your|our) (customer'?s )?brand.*(without|no) (authoriz|license)|仿(制|货|款)|山寨|高仿|贴(牌|标).*(大牌|知名品牌)|冒牌/i,
+    evidence: "要求仿制 / 贴他方品牌 / 疑似侵权",
+    action: "拒绝任何仿冒，仅接受自有品牌或有合法授权的贴牌"
+  },
+  {
+    level: "medium",
+    category: "利润风险",
+    test: /target price (is |of )?\$?\d|below (your |the )?cost|half (of )?(your |the )?price|cheaper than (alibaba|the market)|lowest price (or|otherwise)|骨折价|成本价|亏本|远低于|压到|最低到/i,
+    evidence: "目标价疑似低于成本 / 极限压价",
+    action: "守住底价，用价值和服务谈判，避免亏本接单"
+  },
+  {
+    level: "low",
+    category: "样品滥用",
+    test: /free samples? (shipped |sent )?(at|on) your (cost|expense|account)|(just|only) (want|need|looking for) (free )?samples|send (me |us )?(free )?samples? (first|to test).*(no order)|免费(寄|包邮)样|只(要|想要)样品/i,
+    evidence: "疑似只索要免费样品，无采购意向",
+    action: "收取样品费或运费押金，成单后返还；先要采购量与规格"
+  },
+  {
+    level: "low",
+    category: "信息不一致",
+    test: null, // 由 detectRisksLocal 特判
+    evidence: "",
+    action: ""
+  }
+];
+
+function detectRisksLocal(text, prospect) {
+  const risks = [];
+  RISK_RULES.forEach((rule) => {
+    if (rule.test && rule.test.test(text || "")) {
+      risks.push({ level: rule.level, category: rule.category, evidence: rule.evidence, action: rule.action });
+    }
+  });
+  // 信息不一致：邮箱域名与公司名/官网明显不符（免费邮箱冒充企业）
+  if (prospect?.email && /@(gmail|yahoo|hotmail|outlook|163|qq|foxmail)\./i.test(prospect.email)) {
+    if (/\b(inc|ltd|llc|corp|gmbh|co\.?,? ?ltd)\b/i.test(prospect.company)) {
+      risks.push({
+        level: "low",
+        category: "信息不一致",
+        evidence: "自称公司却用免费邮箱，域名与企业名不匹配",
+        action: "索取企业邮箱与营业执照核验身份"
+      });
+    }
+  }
+  return risks;
+}
+
+function conversationRisks(prospectId) {
+  const stored = getStoredAI(prospectId);
+  const prospect = state.prospects.find((p) => p.id === prospectId);
+  const message = [...state.inbound].reverse().find((m) => m.prospectId === prospectId);
+  if (stored && Array.isArray(stored.risks)) {
+    // Claude 已分析：合并 Claude 结果 + 本地规则兜底（去重按类别）
+    const local = message ? detectRisksLocal(message.body, prospect) : [];
+    const cats = new Set(stored.risks.map((r) => r.category));
+    return [...stored.risks, ...local.filter((r) => !cats.has(r.category))];
+  }
+  return message ? detectRisksLocal(message.body, prospect) : [];
+}
+
+function riskLevelTone(level) {
+  return level === "high" ? "red" : level === "medium" ? "amber" : "muted";
+}
+
+function highestRiskLevel(risks) {
+  if (risks.some((r) => r.level === "high")) return "high";
+  if (risks.some((r) => r.level === "medium")) return "medium";
+  return risks.length ? "low" : null;
 }
 
 async function generateSequenceAI() {
@@ -3867,6 +4011,7 @@ async function parseAgentTask() {
     approvalMode: "review",
     status: "draft",
     funnel: { raw: 0, matched: 0, verified: 0, deduped: 0, scored: 0 },
+    recurring: { enabled: false, interval: "weekly", perCycle: 20, lastRunAt: null, cyclesRun: 0 },
     startedAt: timestamp()
   };
   state.agent.approvals = [];
@@ -3959,6 +4104,59 @@ function agentApprove(approval, quiet = false) {
   approval.status = "approved";
   if (!quiet) addLog(`已批准触达：${prospect.company}`);
   if (!state.agent.approvals.some((a) => a.status === "pending")) task.status = "outreach";
+}
+
+function agentRecurring() {
+  const task = state.agent.task;
+  if (!task) return null;
+  if (!task.recurring) task.recurring = { enabled: false, interval: "weekly", perCycle: 20, lastRunAt: null, cyclesRun: 0 };
+  return task.recurring;
+}
+
+const AGENT_INTERVAL_MS = { daily: 86400000, weekly: 7 * 86400000, monthly: 30 * 86400000 };
+
+function agentCycleDue() {
+  const rec = agentRecurring();
+  if (!rec || !rec.enabled) return false;
+  if (!rec.lastRunAt) return true;
+  return Date.now() - new Date(rec.lastRunAt).getTime() >= (AGENT_INTERVAL_MS[rec.interval] || AGENT_INTERVAL_MS.weekly);
+}
+
+async function agentRunCycle(manual = false) {
+  const task = state.agent.task;
+  const rec = agentRecurring();
+  if (!task || task.status === "draft") return 0;
+
+  const perCycle = clamp(Number(rec.perCycle) || 20, 1, 200);
+  let batch = null;
+
+  // Webhook 模式：走真实采集补充；否则用演示生成器模拟"每周补量"
+  if (state.settings.mode === "webhook" && webhookUrl("search")) {
+    batch = await trySearchWebhook();
+  }
+  if (!batch?.length) {
+    const salt = `R${(rec.cyclesRun || 0) + 1}`;
+    const generated = generateProspects(state.campaign, perCycle, salt);
+    const seen = new Set(state.prospects.map((p) => p.website || p.company.toLowerCase()));
+    batch = generated.filter((p) => {
+      const key = p.website || p.company.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    if (!manual && !batch.length) return 0;
+  }
+
+  state.prospects = [...batch, ...state.prospects];
+  agentOnProspectsImported(batch);
+  rec.lastRunAt = new Date().toISOString();
+  rec.cyclesRun = (rec.cyclesRun || 0) + 1;
+  addLog(
+    `周期补量（第 ${rec.cyclesRun} 轮 · ${rec.interval === "daily" ? "每日" : rec.interval === "monthly" ? "每月" : "每周"}）：新增 ${batch.length} 家线索走漏斗`
+  );
+  saveState();
+  render();
+  return batch.length;
 }
 
 const AGENT_HOT_INTENTS = ["price", "sample", "moq", "cert", "leadtime", "discount"];
@@ -4147,6 +4345,17 @@ async function handleInboundAutoRespond(prospectId) {
     return;
   }
 
+  // 护栏 3：识别到高风险，AI 不擅自答复，立即转人工
+  const risks = conversationRisks(prospectId);
+  const highRisk = risks.find((r) => r.level === "high");
+  if (highRisk) {
+    message.autoAction = { type: "escalated", reason: `高风险·${highRisk.category}` };
+    addLog(`⚠️ 高风险「${highRisk.category}」：AI 不擅自答复，已转人工接管：${prospect.company}`);
+    saveState();
+    render();
+    return;
+  }
+
   // 标准问题：自动答复（明确告知详细报价由销售跟进）
   const stored = getStoredAI(prospectId);
   const intentKey = stored ? stored.intent : classifyIntent(text).key;
@@ -4183,6 +4392,17 @@ function renderAgentTaskCard() {
 
   if (task.status !== "draft") {
     const modeLabel = { review: "逐条审批", spot: "批量抽审", auto: "全自动" }[task.approvalMode];
+    const rec = agentRecurring();
+    const intervalOptions = [
+      ["daily", "每天"],
+      ["weekly", "每周"],
+      ["monthly", "每月"]
+    ]
+      .map(([v, l]) => `<option value="${v}" ${rec.interval === v ? "selected" : ""}>${l}</option>`)
+      .join("");
+    const cycleStatus = rec.enabled
+      ? `已执行 ${rec.cyclesRun || 0} 轮 · ${rec.lastRunAt ? `上次 ${new Date(rec.lastRunAt).toLocaleDateString("zh-CN")}` : "尚未执行"}${agentCycleDue() ? " · 本周期待执行" : ""}`
+      : "未开启";
     card.innerHTML = `
       <div class="panel-heading">
         <div>
@@ -4199,6 +4419,14 @@ function renderAgentTaskCard() {
         ${parsed.use_email ? `<span class="channel-badge email">邮件</span>` : ""}
         ${parsed.use_whatsapp ? `<span class="channel-badge whatsapp">WhatsApp</span>` : ""}
       </div>
+      <div class="agent-recurring">
+        <label class="toggle-row"><input id="agentRecurEnabled" type="checkbox" ${rec.enabled ? "checked" : ""} /><span>周期自动补量</span></label>
+        <label class="inline-field"><span>频率</span><select id="agentRecurInterval">${intervalOptions}</select></label>
+        <label class="inline-field"><span>每轮线索数</span><input id="agentRecurPer" type="number" min="1" max="200" value="${rec.perCycle}" /></label>
+        <button class="ghost-button" id="agentRunCycleNow" type="button"><svg><use href="#icon-play" /></svg><span>立即补充一批</span></button>
+        <span class="webhook-status ${rec.enabled ? "ok" : ""}">${cycleStatus}</span>
+      </div>
+      <p class="connector-hint">周期补量：开启后自动驾驶每到周期自动补充新线索走一遍漏斗（浏览器演示用生成器模拟；真实部署走搜索采集 Webhook + 外部 cron 调度）。</p>
     `;
     return;
   }
@@ -4363,22 +4591,30 @@ function renderAgentHandoff() {
   const insight = computeAgentInsight();
   const hotHtml = hot.length
     ? hot
-        .map(
-          ({ c, label, summary }) => `
+        .map(({ c, label, summary }) => {
+          const risks = conversationRisks(c.prospectId);
+          const riskBadge = risks.length
+            ? `<span class="intent-tag ${riskLevelTone(highestRiskLevel(risks))}">⚠️ ${risks.length} 项风险</span>`
+            : "";
+          const riskLine = risks.length
+            ? `<p class="approval-why risk-line">风险：${risks.map((r) => escapeHtml(r.category)).join("、")}——${escapeHtml(risks[0].action)}</p>`
+            : "";
+          return `
             <article class="agent-hot-card">
               <div class="crm-card-top">
                 <strong>🔥 ${escapeHtml(c.company)}</strong>
-                <span class="intent-tag red">意图：${escapeHtml(label)}</span>
+                <span class="agent-hot-badges"><span class="intent-tag red">${escapeHtml(label)}</span>${riskBadge}</span>
               </div>
               <p class="approval-why">${escapeHtml(summary || summarizeConversation(c))}</p>
+              ${riskLine}
               <div class="ai-actions">
                 <button class="primary-button" data-agent-takeover="${c.prospectId}" type="button"><svg><use href="#icon-inbox" /></svg><span>接管会话</span></button>
               </div>
             </article>
-          `
-        )
+          `;
+        })
         .join("")
-    : `<div class="empty-state">暂无热意向。客户回复询价/要样/问交期时会出现在这里并推送接管</div>`;
+    : `<div class="empty-state">暂无热意向。客户回复询价/要样/问交期或触发风险时会出现在这里并推送接管</div>`;
   const warmHtml = warm.length
     ? warm.map(({ c, label }) => `<span class="tag">🌤 ${escapeHtml(c.company)} · ${escapeHtml(label)}</span>`).join("")
     : `<span class="tag">暂无</span>`;
@@ -5468,6 +5704,27 @@ elements.agentTaskCard.addEventListener("click", (event) => {
   }
 });
 
+elements.agentTaskCard.addEventListener("change", (event) => {
+  const rec = agentRecurring();
+  if (!rec) return;
+  if (event.target.id === "agentRecurEnabled") {
+    rec.enabled = event.target.checked;
+    addLog(rec.enabled ? "周期自动补量已开启（需配合自动驾驶或点「立即补充」）" : "周期自动补量已关闭");
+    saveState();
+    render();
+  } else if (event.target.id === "agentRecurInterval") {
+    rec.interval = event.target.value;
+    saveState();
+  } else if (event.target.id === "agentRecurPer") {
+    rec.perCycle = clamp(Number(event.target.value) || 20, 1, 200);
+    saveState();
+  }
+});
+
+elements.agentTaskCard.addEventListener("click", (event) => {
+  if (event.target.closest("#agentRunCycleNow")) agentRunCycle(true);
+});
+
 elements.agentApprovalList.addEventListener("click", (event) => {
   const approveId = event.target.closest("[data-agent-approve]")?.dataset.agentApprove;
   const skipId = event.target.closest("[data-agent-skip]")?.dataset.agentSkip;
@@ -5813,3 +6070,6 @@ elements.saveSettings.addEventListener("click", () => {
 
 // 刷新页面后恢复自动驾驶
 if (state.autopilot?.enabled) startAutopilotTimer();
+
+// 首次渲染（放在文件末尾，确保 render 依赖的所有模块级 const 已初始化）
+render();

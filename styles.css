@@ -2482,6 +2482,103 @@ body.dark .agent-hot-card {
   border-color: rgba(251, 146, 60, 0.35);
 }
 
+.agent-recurring {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 12px 0 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+}
+
+.inline-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.inline-field span {
+  display: inline;
+  white-space: nowrap;
+}
+
+.inline-field select,
+.inline-field input {
+  min-height: 34px;
+  width: auto;
+  min-width: 80px;
+}
+
+/* ---------- 风险识别 ---------- */
+.risk-block {
+  margin: 10px 0;
+  padding: 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+}
+
+.risk-block.risk-high {
+  border-color: #eab3a0;
+  background: #fdf3ee;
+}
+
+.risk-block.risk-medium {
+  border-color: #f0d6bf;
+  background: #fdf7ee;
+}
+
+.risk-block.risk-low {
+  background: var(--surface-soft);
+}
+
+.risk-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.risk-detail {
+  display: grid;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.risk-detail strong {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.risk-detail span {
+  color: var(--muted);
+}
+
+.risk-line {
+  color: var(--red) !important;
+}
+
+.agent-hot-badges {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+body.dark .risk-block.risk-high {
+  background: rgba(251, 146, 60, 0.12);
+  border-color: rgba(251, 146, 60, 0.35);
+}
+
+body.dark .risk-block.risk-medium {
+  background: rgba(240, 179, 92, 0.1);
+  border-color: rgba(240, 179, 92, 0.3);
+}
+
 .agent-auto-log {
   display: grid;
   gap: 6px;

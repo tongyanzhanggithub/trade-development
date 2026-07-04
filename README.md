@@ -11,6 +11,9 @@
 - 潜客队列：管理公司、市场、网站、来源、角色、评分、采购信号、审核状态。
 - AI 客户评分：按官网真实性、联系方式、采购信号、客户类型和互动信号（回复/打开/触达）加权计算成交概率，输出 A/B/C/D 优先级与可解释的因子明细。
 - 智能找联系方式：本地按域名+决策人生成多个候选邮箱（带置信度与模式，可一键设为主邮箱）；「AI 找联系人」按真实源优先（Hunter/Apollo/Dropcontact via 邮箱查找 Webhook，返回验证过的联系方式）→ Claude 推测决策人/候选邮箱/公司画像/匹配度 → 本地规则兜底，来源有徽章标注（真实验证/AI 推测/规则推测）。
+- Claude 联网找客户：搜索页「Claude 联网找客户」按钮，用 Claude 内置联网搜索（web_search）按当前活动的市场/客户类型/产品/关键词，直接搜出真实存在的目标采购商并核验官网，解析进线索池走漏斗（需在设置配置 Claude API Key）。自动排除 alibaba/amazon 等平台与目录站本身。
+- 粘贴/导入解析增强：一次粘贴尽量多抽公司——支持一行含多个 URL 自动拆分、CSV 表头自动识别跳过、全文域名兜底扫描（正文里任何真实域名都能补成线索），并自动跳过 google/linkedin/alibaba 等平台域名；散文行内夹域名时用域名反推干净公司名。
+- 找相似客户：潜客详情「找相似客户」按钮，以选中这家为样本，配 Claude 时联网找同市场/同品类/相近规模的真实相似公司，未配 Claude 时用本地规则按其特征生成一批（清晰去重，展示名不含内部标记）。
 - Webhook 联调：每个渠道 Webhook 可一键测试连接（含状态码与延时），Webhook 模式下把邮件/WhatsApp/CRM 队列真实派发给外部服务，并记录活动日志。
 - 自动驾驶：一键开启全流程自动流转——新线索自动补全验证、高分自动入队（遵守评分阈值/日上限/冷却期）、到期邮件批量发送并回传、跨渠道接力自动执行、客户回复自动生成 AI 草稿送审批。
 - 流程规则：客户回复即自动取消剩余触达序列（回复即停）；询价/要样/砍价等意图自动推进商机到「询盘」；冷却期内不重复触达同一客户；审批通过即自动发送/派发。
@@ -216,3 +219,55 @@ Webhook 返回潜客时建议包含：
   ]
 }
 ```
+
+## 更快找到客户的四种方式
+
+系统提供四条从"找到公司"到"拿到联系方式"的加速通道，按是否配置 Claude API 分档，均遵守"只用公开信息、发送始终人工审批"的边界。
+
+| 方式 | 入口 | 需要 Claude | 说明 |
+| --- | --- | --- | --- |
+| Claude 联网找客户 | 搜索页顶部按钮 | 是 | Claude 联网搜索并核验真实目标客户，直接进线索池走漏斗 |
+| 粘贴/导入解析增强 | 搜索页「导入搜索结果」 | 否 | 一次粘贴多抽公司：多 URL 拆分 + CSV 表头识别 + 全文域名扫描 |
+| 找相似客户 | 潜客详情按钮 | 可选 | 以一家好客户为样本扩展一批相似公司（有 Claude 走联网，否则本地规则） |
+| 真实数据源接口 | 设置 → 搜索采集 Webhook | 否 | 接 SerpAPI/海关数据/Apollo 等，把真实数据源接进寻客漏斗 |
+
+### 真实数据源接口（搜索采集 Webhook）
+
+在「设置 → 搜索采集 Webhook」填入自动化平台（n8n / Make / Activepieces）或自建服务的地址后，系统在寻客/周期任务时会向该地址 POST 一个搜索请求，期望同步返回潜客数组。
+
+系统发出的请求载荷（`campaign` 为当前活动配置，`searchPlan` 为已生成的搜索式数组）：
+
+```json
+{
+  "type": "search",
+  "sentAt": "2026-07-05T00:00:00.000Z",
+  "campaign": {
+    "product": "stainless steel water bottle",
+    "markets": "United States, Germany",
+    "customerType": "进口批发商",
+    "valueProps": "...",
+    "dailyLimit": 20
+  },
+  "searchPlan": [
+    { "channel": "Google", "market": "United States", "query": "\"stainless steel water bottle\" (\"importer\" OR \"distributor\") \"United States\" -alibaba" }
+  ]
+}
+```
+
+期望返回（与上文"Webhook 返回潜客"结构一致，`prospects` 数组即可）：
+
+```json
+{
+  "prospects": [
+    { "company": "Acme Drinkware", "market": "United States", "website": "acmedrinkware.com", "email": "buyer@acmedrinkware.com", "source": "SerpAPI", "score": 80 }
+  ]
+}
+```
+
+#### n8n 示例工作流
+
+- **Google/SerpAPI 找官网**：Webhook 触发 → HTTP Request 调 SerpAPI（`q` 用 `campaign.product`+`campaign.markets` 拼搜索式，或直接复用传入的 `searchPlan[].query`）→ Function 节点解析 organic_results 的 title/link 成 `{company, website, source:"SerpAPI"}` → Respond to Webhook 返回 `{prospects:[...]}`。
+- **海关数据核验进口商**：Webhook → HTTP Request 调海关数据服务（如 ImportGenius / 采购商数据 API）按品类查有真实进口记录的买家 → 映射成 prospects（`buyingSignal` 写"有 N 条进口记录"）→ 返回。
+- **Apollo/Hunter 补联系人**：把上一步的 website 传给邮箱补全 Webhook（Apollo People Search / Hunter Domain Search）→ 返回 `contactName/role/email` 合并进 prospects。这一步也可直接用潜客详情的「AI 找联系人」触发邮箱查找 Webhook。
+
+> 合规提醒：Webhook 侧对接的第三方数据源需自行确保数据来源合法、遵守其服务条款；系统只负责把返回的公开信息接进漏斗，不做任何抓取或反爬绕过。浏览器直连需目标地址允许跨域（CORS），或在自动化平台侧开启。

@@ -1,4 +1,4 @@
-window.__APP_V = "15";
+window.__APP_V = "18";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -27,6 +27,7 @@ const elements = {
   topProspects: $("#topProspects"),
   copyQueries: $("#copyQueries"),
   runDiscovery: $("#runDiscovery"),
+  webSearchFind: $("#webSearchFind"),
   createProspects: $("#createProspects"),
   loadImportExample: $("#loadImportExample"),
   importSearchResults: $("#importSearchResults"),
@@ -771,6 +772,10 @@ function renderProspectDetail() {
       <button class="primary-button" data-action="find-contact" type="button" title="真实源(Hunter/Apollo via Webhook)优先，否则 Claude 推测，兜底本地规则">
         <svg><use href="#icon-search" /></svg>
         <span>AI 找联系人</span>
+      </button>
+      <button class="ghost-button" data-action="find-lookalike" type="button" title="以这家为样本，联网(或本地)扩展出一批相似公司进线索池">
+        <svg><use href="#icon-users" /></svg>
+        <span>找相似客户</span>
       </button>
       <button class="ghost-button" data-action="approve-prospect" type="button">
         <svg><use href="#icon-check" /></svg>
@@ -2590,15 +2595,17 @@ function generateProspects(campaign, targetCount = 18, salt = "") {
   const prefixes = ["Atlas", "Northstar", "Prime", "Summit", "Blueport", "Harbor", "Apex", "Metro", "Pioneer", "Meridian", "Continental", "TradeLink", "Urban", "Global"];
   const suffixes = suffixesForType(campaign.customerType);
   const roles = rolesForType(campaign.customerType);
+  // salt 用于让不同轮次/相似扩展产出不同公司：仅用来错位命名组合并保证域名唯一，绝不进入展示名
+  const saltNum = salt ? [...salt].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) : 0;
   const prospects = [];
 
   markets.forEach((market, marketIndex) => {
     for (let index = 0; index < perMarket; index += 1) {
       const source = sourceChannels[(index + marketIndex) % sourceChannels.length];
-      const prefix = prefixes[(index + marketIndex * 2) % prefixes.length];
-      const suffix = suffixes[(index + marketIndex) % suffixes.length];
-      const company = `${prefix} ${capitalize(productNoun)} ${suffix}${salt ? ` ${salt}` : ""}`;
-      const domain = makeDomain(company, market);
+      const prefix = prefixes[(index + marketIndex * 2 + saltNum) % prefixes.length];
+      const suffix = suffixes[(index + marketIndex + saltNum) % suffixes.length];
+      const company = `${prefix} ${capitalize(productNoun)} ${suffix}`;
+      const domain = makeDomain(salt ? `${company} ${salt}` : company, market);
       const query = `${campaign.product} ${market} ${campaign.customerType}`;
       prospects.push({
         id: makeId("prospect"),
@@ -2625,22 +2632,50 @@ function generateProspects(campaign, targetCount = 18, salt = "") {
   return prospects.slice(0, targetCount);
 }
 
+// 平台/社媒/目录站域名——扫描时跳过，避免把 google.com 之类当成客户
+const NON_COMPANY_DOMAIN =
+  /^(google|bing|linkedin|facebook|instagram|twitter|x|youtube|amazon|ebay|alibaba|made-in-china|globalsources|temu|shein|wikipedia|yelp|yellowpages|tripadvisor|pinterest|reddit|medium|wordpress|blogspot|gmail|yahoo|hotmail|outlook)\./i;
+
 function importSearchResultsText(text, campaign) {
-  const lines = text
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .filter(Boolean);
   const markets = normalizeMarkets(campaign.markets);
+  const marketAt = (i) => markets[i % Math.max(markets.length, 1)] || markets[0] || "United States";
   const seen = new Set(state.prospects.map((item) => item.website || item.company.toLowerCase()));
   const imported = [];
+  let mi = 0;
 
-  lines.forEach((line, index) => {
-    const prospect = parseProspectLine(line, campaign, markets[index % Math.max(markets.length, 1)] || markets[0]);
+  const rawLines = text.split(/\r?\n/).map((l) => l.trim());
+  // CSV 表头识别：首行是 company/website/email 之类则跳过
+  const headerLike = /(company|name|website|domain|url|email|country|market)/i;
+  const isCsv = rawLines[0] && rawLines[0].split(/[,;\t]/).length >= 2 && headerLike.test(rawLines[0]) && !/https?:/i.test(rawLines[0]);
+  const lines = (isCsv ? rawLines.slice(1) : rawLines).filter(Boolean);
+
+  const add = (prospect) => {
     if (!prospect) return;
+    // 平台/社媒/目录站域名不作为客户线索
+    if (prospect.website && NON_COMPANY_DOMAIN.test(prospect.website.replace(/^www\./, ""))) return;
     const key = prospect.website || prospect.company.toLowerCase();
-    if (seen.has(key)) return;
+    if (!key || seen.has(key)) return;
     seen.add(key);
     imported.push(prospect);
+  };
+
+  lines.forEach((line) => {
+    // 一行含多个 URL（如整页 Google 结果粘贴）：按每个 URL 拆成多个公司
+    const urls = line.match(/https?:\/\/[^\s,，、|]+|www\.[^\s,，、|]+/gi);
+    if (urls && urls.length > 1) {
+      urls.forEach((u) => add(parseProspectLine(u, campaign, marketAt(mi++))));
+      return;
+    }
+    add(parseProspectLine(line, campaign, marketAt(mi++)));
+  });
+
+  // 全文域名兜底扫描：抽出正文里任何还没被捕获的真实域名，补成轻量线索
+  const domainSweep = text.match(/\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)+\.[a-z]{2,}\b/gi) || [];
+  domainSweep.forEach((d) => {
+    const domain = d.toLowerCase().replace(/^www\./, "");
+    if (NON_COMPANY_DOMAIN.test(domain) || domain.split(".").length < 2) return;
+    if (seen.has(domain)) return;
+    add(parseProspectLine(domain, campaign, marketAt(mi++)));
   });
 
   return imported;
@@ -2653,7 +2688,11 @@ function parseProspectLine(line, campaign, market) {
     /\+\d[\d\s().-]{6,}\d|(?:\(?\d{2,4}\)?[\s-]?)?\d{3,4}[\s-]?\d{4}/
   );
   const website = urlMatch ? stripProtocol(urlMatch[0]).split("/")[0] : emailMatch ? emailMatch[0].split("@")[1] : "";
-  const company = cleanCompanyName(line, website, emailMatch?.[0]) || domainToCompany(website);
+  const cleaned = cleanCompanyName(line, website, emailMatch?.[0]);
+  // 整句散文里夹着域名时（如 "visit us at x.com or ..."），用域名反推公司名更干净
+  const proseStopWords = /(^|\s)(at|or|us|of|in|the|and|to|a|an|for|visit|contact|mention|somewhere|text|please|here|see|from)(\s|$)/i;
+  const looksProse = cleaned && cleaned.split(/\s+/).length >= 4 && proseStopWords.test(cleaned);
+  const company = website && (looksProse || !cleaned) ? domainToCompany(website) : cleaned || domainToCompany(website);
 
   if (!company && !website && !emailMatch) return null;
 
@@ -3998,6 +4037,155 @@ async function enrichContactAI(prospectId, quiet = false) {
 
 function contactSourceLabel(source) {
   return source === "webhook" ? "真实验证" : source === "claude" ? "AI 推测" : "规则推测";
+}
+
+/* ---------- Claude 联网找客户（web search）+ 相似客户扩展 ---------- */
+
+async function callClaudeWebSearch(systemPrompt, userText, maxTokens = 4000) {
+  const model = state.settings.aiModel || "claude-opus-4-8";
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": (state.settings.aiApiKey || "").trim(),
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true"
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: maxTokens,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userText }],
+      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 6 }]
+    })
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => null);
+    throw new Error(err?.error?.message || `HTTP ${response.status}`);
+  }
+  const data = await response.json();
+  if (data.stop_reason === "refusal") throw new Error("请求被安全策略拒绝");
+  return (data.content || [])
+    .filter((b) => b.type === "text")
+    .map((b) => b.text)
+    .join("\n");
+}
+
+function extractJsonArray(text) {
+  const start = text.indexOf("[");
+  const end = text.lastIndexOf("]");
+  if (start < 0 || end <= start) return null;
+  try {
+    return JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
+function prospectFromFound(item, fallbackMarket) {
+  const website = stripProtocol(item.website || item.domain || "").split("/")[0];
+  const company = (item.company || item.name || domainToCompany(website) || "未命名公司").trim();
+  const directWebsite =
+    website && !/(google|linkedin|facebook|instagram|youtube|amazon|alibaba|made-in-china|globalsources|temu|shein|directory)/i.test(website);
+  return {
+    id: makeId("prospect"),
+    company,
+    market: item.market || fallbackMarket,
+    source: "Claude 联网",
+    website,
+    contactName: "待补全",
+    role: "待确认采购角色",
+    email: item.email || "",
+    emailStatus: item.email ? "待验证" : "待查找",
+    phone: item.phone || "",
+    phoneStatus: item.phone ? "待人工确认" : "待查找",
+    status: "新发现",
+    score: directWebsite ? 74 : 60,
+    confidence: directWebsite ? 70 : 52,
+    buyingSignal: item.note || `Claude 联网找到，疑似 ${state.campaign.product} 相关买家`,
+    companySize: item.size || "待确认",
+    searchQuery: item.note || "Claude 联网搜索"
+  };
+}
+
+async function webSearchProspects(opts = {}) {
+  if (!aiEnabled()) {
+    addLog("未启用 Claude API：请在「设置 → AI 引擎」切换并填入 Key 后再联网找客户");
+    navigateTo("settings");
+    return 0;
+  }
+  const count = opts.count || 12;
+  const seed = opts.seed || "";
+  addLog(seed ? `Claude 正在联网找相似客户…` : "Claude 正在联网搜索真实目标客户…");
+  renderLogs();
+
+  const markets = normalizeMarkets(state.campaign.markets);
+  const system =
+    "你是外贸找客助手，可联网搜索。任务：找出真实存在的目标采购商/进口商/批发商公司。用网络搜索核实公司真实存在并尽量拿到官网域名。只输出一个 JSON 数组，不要额外文字，每个元素含 {company, website, market, note}（note 为一句中文：为什么疑似目标客户/采购信号）。website 只要主域名。排除 alibaba/amazon/made-in-china 等平台与目录站本身。";
+  const user = seed
+    ? `请找 ${count} 家与下面这个客户相似的公司（同市场、同品类、相近规模）：\n${seed}\n我方产品: ${state.campaign.product}`
+    : `目标市场: ${markets.join(", ")}
+客户类型: ${state.campaign.customerType}
+产品/品类: ${state.campaign.product}
+搜索关键词: ${state.agent?.task?.parsed?.keywords?.join(", ") || state.campaign.product}
+请找 ${count} 家真实公司。`;
+
+  try {
+    const text = await callClaudeWebSearch(system, user, 4500);
+    const arr = extractJsonArray(text);
+    if (!Array.isArray(arr) || !arr.length) {
+      addLog("Claude 联网未返回可解析的公司列表，请重试或改用粘贴导入");
+      return 0;
+    }
+    const seenKeys = new Set(state.prospects.map((p) => p.website || p.company.toLowerCase()));
+    const fresh = [];
+    arr.forEach((item) => {
+      const p = prospectFromFound(item, markets[0] || "United States");
+      const key = p.website || p.company.toLowerCase();
+      if (!p.company || seenKeys.has(key)) return;
+      seenKeys.add(key);
+      fresh.push(p);
+    });
+    if (!fresh.length) {
+      addLog("联网找到的公司都已在库中（已去重）");
+      return 0;
+    }
+    state.prospects = [...fresh, ...state.prospects];
+    agentOnProspectsImported(fresh);
+    addLog(`Claude 联网找到 ${fresh.length} 家真实候选客户，已进线索池${state.agent?.task ? "并走漏斗" : "（去「潜客」审核）"}`);
+    saveState();
+    render();
+    return fresh.length;
+  } catch (error) {
+    addLog(`Claude 联网找客户失败：${error.message}`);
+    return 0;
+  }
+}
+
+async function findLookalike(prospectId) {
+  const p = state.prospects.find((x) => x.id === prospectId);
+  if (!p) return 0;
+  if (aiEnabled()) {
+    return await webSearchProspects({
+      count: 8,
+      seed: `公司: ${p.company}\n市场: ${p.market}\n品类/信号: ${p.buyingSignal || state.campaign.product}\n规模: ${p.companySize || "未知"}`
+    });
+  }
+  // 无 Claude：用同市场同类型的规则生成器兜底
+  const generated = generateProspects({ ...state.campaign, markets: p.market }, 8, `L${p.company.replace(/\W/g, "").slice(0, 4)}`);
+  const seen = new Set(state.prospects.map((x) => x.website || x.company.toLowerCase()));
+  const fresh = generated.filter((g) => {
+    const key = g.website || g.company.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  state.prospects = [...fresh, ...state.prospects];
+  agentOnProspectsImported(fresh);
+  addLog(`已按「${p.company}」特征生成 ${fresh.length} 家相似线索（本地规则；配 Claude 可联网找真实相似公司）`);
+  saveState();
+  render();
+  return fresh.length;
 }
 
 async function generateSequenceAI() {
@@ -5560,6 +5748,30 @@ elements.runDiscovery.addEventListener("click", () => {
   render();
 });
 
+if (elements.webSearchFind) {
+  elements.webSearchFind.addEventListener("click", async () => {
+    readCampaignFromForm();
+    const btn = elements.webSearchFind;
+    if (btn.dataset.busy === "1") return;
+    btn.dataset.busy = "1";
+    const original = btn.querySelector("span")?.textContent;
+    if (btn.querySelector("span")) btn.querySelector("span").textContent = "联网搜索中…";
+    btn.disabled = true;
+    try {
+      const count = await webSearchProspects({ count: 10 });
+      if (count > 0) addLog(`Claude 联网找到 ${count} 家新公司，已进线索池`);
+    } catch (error) {
+      addLog(`联网找客户失败：${error.message}`);
+      saveState();
+      render();
+    } finally {
+      btn.dataset.busy = "0";
+      btn.disabled = false;
+      if (btn.querySelector("span") && original) btn.querySelector("span").textContent = original;
+    }
+  });
+}
+
 elements.createProspects.addEventListener("click", () => {
   readCampaignFromForm();
   if (!state.searchPlan.length) state.searchPlan = generateSearchPlan(state.campaign);
@@ -5669,6 +5881,24 @@ elements.prospectDetail.addEventListener("click", (event) => {
     addLog(`正在为 ${prospect.company} 找联系人…`);
     renderLogs();
     enrichContactAI(prospect.id);
+    return;
+  }
+
+  if (action === "find-lookalike") {
+    addLog(`以 ${prospect.company} 为样本，扩展相似客户…`);
+    renderLogs();
+    Promise.resolve(findLookalike(prospect.id))
+      .then((n) => {
+        if (n > 0) addLog(`扩展出 ${n} 家相似公司，已进线索池`);
+        else addLog("没有找到新的相似公司（可能都已在池中）");
+        saveState();
+        render();
+      })
+      .catch((error) => {
+        addLog(`找相似客户失败：${error.message}`);
+        saveState();
+        render();
+      });
     return;
   }
 

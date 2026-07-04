@@ -1,4 +1,4 @@
-window.__APP_V = "13";
+window.__APP_V = "14";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -4541,7 +4541,10 @@ function renderAgentApprovals() {
   const pending = approvals.filter((a) => a.status === "pending");
   elements.agentApprovalPanel.hidden = !task || approvals.length === 0;
   elements.agentApproveAll.hidden = pending.length === 0;
-  if (elements.agentApprovalPanel.hidden) return;
+  if (elements.agentApprovalPanel.hidden) {
+    elements.agentApprovalList.innerHTML = "";
+    return;
+  }
 
   elements.agentApprovalList.innerHTML = approvals
     .map((approval) => {
@@ -5328,6 +5331,8 @@ elements.campaignForm.addEventListener("submit", (event) => {
   state.tasks = [];
   state.inbound = [];
   state.selectedConversationId = null;
+  // 生成新的开发计划会清空线索池，同步结束进行中的 Agent 任务，避免悬挂审批指向已删除客户
+  state.agent = { task: null, approvals: [], autoRespond: state.agent?.autoRespond || false };
   addLog(`生成开发计划：${state.campaign.product}，等待导入真实搜索结果`);
   saveState();
   render();

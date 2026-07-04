@@ -1,4 +1,4 @@
-window.__APP_V = "26";
+window.__APP_V = "27";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -18,6 +18,7 @@ const elements = {
   companyInput: $("#companyInput"),
   campaignStatus: $("#campaignStatus"),
   generatePlan: $("#generatePlan"),
+  cqPresets: $("#cqPresets"),
   oneClickPipeline: $("#oneClickPipeline"),
   resetDemo: $("#resetDemo"),
   runAutomationTop: $("#runAutomationTop"),
@@ -415,6 +416,59 @@ function mergeManagement(fallback, current) {
 
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+// 重庆优势供应链品类模板：一键填好整套开发活动（产品/市场/客户类型/卖点/认证）
+const CQ_PRESETS = {
+  moto: {
+    label: "摩托车 & 配件",
+    product: "motorcycle spare parts (engines, tyres, chains, brakes, electrical)",
+    markets: "Nigeria, Egypt, Indonesia, Colombia, Peru",
+    customerType: "importer distributor",
+    valueProps:
+      "Chongqing motorcycle cluster (Loncin/Zongshen/Lifan supply chain), OEM-grade quality, stable bulk supply, competitive FOB Chongqing",
+    certifications: "CCC, SONCAP, ISO 9001, export packing & documents"
+  },
+  auto: {
+    label: "汽车零部件",
+    product: "automotive aftermarket parts (filters, brake pads, suspension, lighting)",
+    markets: "UAE, Saudi Arabia, Russia, Mexico, Vietnam",
+    customerType: "importer distributor",
+    valueProps: "Changan supply-chain grade, wide aftermarket coverage, stable QC, flexible MOQ, fast sampling",
+    certifications: "IATF 16949, E-mark, ISO 9001, export documents"
+  },
+  electronics: {
+    label: "笔电 & 电子",
+    product: "consumer electronics & IT accessories (laptops, peripherals, adapters)",
+    markets: "United States, Germany, United Arab Emirates, Brazil",
+    customerType: "retailer chain buyer",
+    valueProps:
+      "Chongqing electronics manufacturing base (world's largest laptop cluster), ODM/OEM capacity, CE/FCC ready, reliable lead time",
+    certifications: "CE, FCC, RoHS, ISO 9001"
+  },
+  machinery: {
+    label: "机械 & 装备",
+    product: "general machinery & industrial equipment",
+    markets: "Indonesia, Saudi Arabia, Nigeria, Brazil, Vietnam",
+    customerType: "contractor project buyer",
+    valueProps:
+      "Chongqing equipment manufacturing cluster, project-grade reliability, spare parts & after-sales support, export crating",
+    certifications: "CE, ISO 9001, export documents"
+  }
+};
+
+function applyCampaignPreset(key) {
+  const preset = CQ_PRESETS[key];
+  if (!preset) return;
+  elements.productInput.value = preset.product;
+  elements.marketsInput.value = preset.markets;
+  elements.customerTypeInput.value = preset.customerType;
+  elements.valuePropsInput.value = preset.valueProps;
+  elements.certificationsInput.value = preset.certifications;
+  readCampaignFromForm();
+  addLog(`已套用重庆品类模板「${preset.label}」——可直接点「一键起量」联网找海外买家（署名/公司名记得填你自己的）`);
+  saveState();
+  render();
 }
 
 function bindCampaignForm() {
@@ -6198,6 +6252,13 @@ elements.campaignForm.addEventListener("submit", (event) => {
 if (elements.oneClickPipeline) {
   elements.oneClickPipeline.addEventListener("click", () => {
     runAsyncButton(elements.oneClickPipeline, "起量中…", () => runOneClickPipeline());
+  });
+}
+
+if (elements.cqPresets) {
+  elements.cqPresets.addEventListener("click", (event) => {
+    const key = event.target.closest("[data-preset]")?.dataset.preset;
+    if (key) applyCampaignPreset(key);
   });
 }
 

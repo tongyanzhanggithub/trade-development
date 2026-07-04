@@ -841,6 +841,43 @@ button.prospect-row.is-selected {
   flex-shrink: 0;
 }
 
+.preset-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.preset-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.chip-button {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fbfaf5;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.chip-button:hover {
+  border-color: var(--blue);
+  background: #eef4ff;
+  color: var(--blue);
+}
+
+body.dark .chip-button {
+  background: #23262d;
+  border-color: #333842;
+  color: #d6dae2;
+}
+
 .outbox-item strong,
 .outbox-item span,
 .task-item strong,

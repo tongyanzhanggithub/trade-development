@@ -736,6 +736,79 @@ button.prospect-row.is-selected {
   gap: 12px;
 }
 
+.outbox-item.selectable {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.outbox-item > input[type="checkbox"],
+.outbox-item .outbox-spacer {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.outbox-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.outbox-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: #fbfaf5;
+}
+
+.outbox-check-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.outbox-controls .pf-summary {
+  font-size: 13px;
+  color: var(--muted);
+  margin-right: auto;
+}
+
+.pf-block-count {
+  color: #b42318;
+  font-weight: 700;
+}
+
+.pf-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.pf-badge.pf-ok {
+  background: #e6f4ea;
+  color: var(--green);
+}
+
+.pf-badge.pf-warn {
+  background: #fff1c2;
+  color: #704800;
+}
+
+.pf-badge.pf-block {
+  background: #fde3e0;
+  color: #b42318;
+}
+
 .outbox-item strong,
 .outbox-item span,
 .task-item strong,

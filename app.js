@@ -1,4 +1,4 @@
-window.__APP_V = "21";
+window.__APP_V = "22";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -955,19 +955,35 @@ function renderOutbox() {
   }
 
   const items = [...state.outbox].sort((a, b) => a.dueDate.localeCompare(b.dueDate));
-  elements.outboxList.innerHTML = items
-    .map(
-      (item) => `
-        <article class="outbox-item">
+  const pending = items.filter((i) => ["待发送", "待审批"].includes(i.status));
+  const passCount = pending.filter((i) => preflightOutboxItem(i).ok).length;
+  const blockCount = pending.length - passCount;
+
+  const strip = pending.length
+    ? `<div class="outbox-controls">
+        <label class="outbox-check-all"><input type="checkbox" id="outboxSelectAll" /><span>全选待发 (${pending.length})</span></label>
+        <span class="pf-summary">${passCount} 封可发${blockCount ? ` · <span class="pf-block-count">${blockCount} 封需修复</span>` : ""}</span>
+        <button class="primary-button" id="batchApproveSend" type="button"><svg><use href="#icon-check" /></svg><span>批量审批发送</span></button>
+      </div>`
+    : "";
+
+  elements.outboxList.innerHTML =
+    strip +
+    items
+      .map((item) => {
+        const selectable = ["待发送", "待审批"].includes(item.status);
+        return `
+        <article class="outbox-item ${selectable ? "selectable" : ""}">
+          ${selectable ? `<input type="checkbox" data-outbox-id="${item.id}" aria-label="选择邮件" />` : `<span class="outbox-spacer"></span>`}
           <span>
             <strong>${escapeHtml(item.company)} · ${escapeHtml(item.label)}</strong>
-            <span>${escapeHtml(item.email)} · ${item.dueDate} · ${escapeHtml(item.subject)}</span>
+            <span>${escapeHtml(item.email || "（缺邮箱）")} · ${item.dueDate} · ${escapeHtml(item.subject)}</span>
           </span>
-          <span class="badge">${escapeHtml(item.status)}</span>
+          <span class="outbox-status">${selectable ? preflightBadge(item) : ""}<span class="badge">${escapeHtml(item.status)}</span></span>
         </article>
-      `
-    )
-    .join("");
+      `;
+      })
+      .join("");
 }
 
 function renderWhatsappQueue() {
@@ -5439,6 +5455,85 @@ async function simulateSendNext() {
   addLog(`已模拟发送：${next.company} · ${next.label}`);
 }
 
+function emailLooksValid(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test((email || "").trim());
+}
+
+// 发送预检：返回 { blockers:[], warnings:[], ok }。blockers 阻止发送，warnings 仅提示
+function preflightOutboxItem(item) {
+  const prospect = state.prospects.find((p) => p.id === item.prospectId);
+  const blockers = [];
+  const warnings = [];
+  if (prospect?.optOut) blockers.push("客户已退订");
+  if (!emailLooksValid(item.email)) blockers.push("邮箱缺失/格式无效");
+  const sensitive = sensitiveTopic(`${item.subject || ""} ${item.body || ""}`);
+  if (sensitive) warnings.push(`含敏感话题：${sensitive}`);
+  const dup = state.outbox.some(
+    (o) =>
+      o.id !== item.id &&
+      o.prospectId === item.prospectId &&
+      o.status === "已发送" &&
+      (o.step === item.step || o.subject === item.subject)
+  );
+  if (dup) warnings.push("疑似重复触达（同客户同类邮件已发送）");
+  return { blockers, warnings, ok: blockers.length === 0 };
+}
+
+function preflightBadge(item) {
+  const pf = preflightOutboxItem(item);
+  if (pf.blockers.length) return `<span class="pf-badge pf-block" title="${escapeHtml(pf.blockers.join("；"))}">⛔ ${escapeHtml(pf.blockers[0])}</span>`;
+  if (pf.warnings.length) return `<span class="pf-badge pf-warn" title="${escapeHtml(pf.warnings.join("；"))}">⚠ ${escapeHtml(pf.warnings[0])}</span>`;
+  return `<span class="pf-badge pf-ok">✓ 可发送</span>`;
+}
+
+// 发送指定的一批发信队列条目（审批即发送，忽略排期日期）；复用 Webhook/本地
+async function sendOutboxItems(items) {
+  const toSend = items.filter((i) => i.status === "待发送" || i.status === "待审批");
+  if (!toSend.length) return 0;
+  if (state.settings.mode === "webhook" && webhookUrl("send")) {
+    const result = await callWebhook("send", { emails: toSend });
+    if (result.ok) {
+      toSend.forEach((item) => {
+        item.status = "已发送";
+        item.sentAt = new Date().toISOString();
+        item.delivered = true;
+      });
+      return toSend.length;
+    }
+    addLog("发信 Webhook 失败，勾选邮件保留待发送");
+    return 0;
+  }
+  toSend.forEach(deliverEmail);
+  return toSend.length;
+}
+
+// 批量审批发送：对勾选的待发/待审批邮件跑发送预检，放行的立即发送，拦截的保留并提示
+async function batchApproveSend() {
+  const checkedIds = [...elements.outboxList.querySelectorAll("input[data-outbox-id]:checked")].map((c) => c.dataset.outboxId);
+  if (!checkedIds.length) {
+    addLog("请先勾选要审批发送的邮件（可点「全选待发」）");
+    return 0;
+  }
+  const items = state.outbox.filter((o) => checkedIds.includes(o.id));
+  const sendable = [];
+  const blocked = [];
+  items.forEach((it) => {
+    if (preflightOutboxItem(it).ok) sendable.push(it);
+    else blocked.push(it);
+  });
+  if (!sendable.length) {
+    addLog(`勾选的 ${items.length} 封都被发送预检拦截（缺邮箱/退订），请先修复联系方式`);
+    saveState();
+    render();
+    return 0;
+  }
+  const sent = await sendOutboxItems(sendable);
+  addLog(`批量审批发送 ${sent} 封${blocked.length ? `，预检拦截 ${blocked.length} 封（缺邮箱/退订，保留待处理）` : ""}`);
+  saveState();
+  render();
+  return sent;
+}
+
 async function sendDueEmails(quiet = false) {
   const today = dateOffset(0);
   const due = state.outbox.filter((item) => item.status === "待发送" && item.dueDate <= today);
@@ -6348,6 +6443,21 @@ elements.sendDueBtn.addEventListener("click", async () => {
   await sendDueEmails();
   saveState();
   render();
+});
+
+// 发信队列：批量审批发送 + 全选（事件委托，控件随 renderOutbox 重绘）
+elements.outboxList.addEventListener("click", (event) => {
+  if (event.target.closest("#batchApproveSend")) {
+    batchApproveSend();
+  }
+});
+elements.outboxList.addEventListener("change", (event) => {
+  if (event.target.id === "outboxSelectAll") {
+    const checked = event.target.checked;
+    elements.outboxList.querySelectorAll("input[data-outbox-id]").forEach((box) => {
+      box.checked = checked;
+    });
+  }
 });
 
 elements.themeToggle.addEventListener("click", toggleTheme);

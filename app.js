@@ -1,4 +1,4 @@
-window.__APP_V = "19";
+window.__APP_V = "21";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -39,6 +39,9 @@ const elements = {
   exportQueries: $("#exportQueries"),
   prospectFilter: $("#prospectFilter"),
   statusFilter: $("#statusFilter"),
+  gradeFilter: $("#gradeFilter"),
+  prospectSort: $("#prospectSort"),
+  queueQualityLeads: $("#queueQualityLeads"),
   prospectTable: $("#prospectTable"),
   prospectDetail: $("#prospectDetail"),
   bulkEnrichContacts: $("#bulkEnrichContacts"),
@@ -655,19 +658,45 @@ function renderTopProspects() {
 function renderProspects() {
   const filter = elements.prospectFilter.value.trim().toLowerCase();
   const status = elements.statusFilter.value;
-  const prospects = state.prospects.filter((item) => {
-    const text = `${item.company} ${item.market} ${item.source} ${item.website} ${item.email}`.toLowerCase();
-    const matchesFilter = !filter || text.includes(filter);
-    const matchesStatus = status === "all" || item.status === status;
-    return matchesFilter && matchesStatus;
-  });
+  const gradeWanted = elements.gradeFilter?.value || "all";
+  const sortBy = elements.prospectSort?.value || "quality";
 
-  if (!prospects.length) {
-    elements.prospectTable.innerHTML = `<div class="empty-state">暂无匹配潜客<button class="ghost-button" data-goto="discovery" type="button">去搜索导入线索 →</button></div>`;
+  // 计算一次质量分并缓存，供筛选/排序/展示复用
+  const scored = state.prospects.map((item, index) => ({ item, index, lead: computeLeadScore(item) }));
+
+  // 质量分概览（全池，不受筛选影响）：让用户一眼看到有多少优质客户可入队
+  const tally = { A: 0, B: 0, C: 0, D: 0 };
+  scored.forEach((s) => {
+    tally[s.lead.grade] += 1;
+  });
+  if (elements.queueQualityLeads) {
+    const qty = state.prospects.filter(isQualityQueueable).length;
+    elements.queueQualityLeads.querySelector("span").textContent = qty ? `一键入队优质客户 (${qty})` : "一键入队优质客户";
+  }
+
+  const rows = scored
+    .filter(({ item, lead }) => {
+      const text = `${item.company} ${item.market} ${item.source} ${item.website} ${item.email}`.toLowerCase();
+      const matchesFilter = !filter || text.includes(filter);
+      const matchesStatus = status === "all" || item.status === status;
+      const matchesGrade = gradeWanted === "all" || lead.grade === gradeWanted;
+      return matchesFilter && matchesStatus && matchesGrade;
+    })
+    .sort((a, b) => {
+      if (sortBy === "recent") return b.index - a.index === 0 ? 0 : a.index - b.index; // 新导入的在数组前面
+      if (sortBy === "market") return a.item.market.localeCompare(b.item.market) || b.lead.probability - a.lead.probability;
+      return b.lead.probability - a.lead.probability; // quality: 高分在前
+    });
+
+  const summary = `<div class="grade-summary">质量分：<span class="prob-grade grade-A">A</span> ${tally.A} · <span class="prob-grade grade-B">B</span> ${tally.B} · <span class="prob-grade grade-C">C</span> ${tally.C} · <span class="prob-grade grade-D">D</span> ${tally.D}</div>`;
+
+  if (!rows.length) {
+    elements.prospectTable.innerHTML = `${state.prospects.length ? summary : ""}<div class="empty-state">暂无匹配潜客<button class="ghost-button" data-goto="discovery" type="button">去搜索导入线索 →</button></div>`;
     return;
   }
 
   elements.prospectTable.innerHTML = `
+    ${summary}
     <div class="prospect-row header">
       <span>公司</span>
       <span>市场</span>
@@ -675,9 +704,9 @@ function renderProspects() {
       <span>评分</span>
       <span>状态</span>
     </div>
-    ${prospects
+    ${rows
       .map(
-        (item) => `
+        ({ item, lead }) => `
           <button class="prospect-row ${item.id === state.selectedProspectId ? "is-selected" : ""}" data-prospect-id="${item.id}" type="button">
             <span>
               <span class="company-name">${escapeHtml(item.company)}</span>
@@ -685,7 +714,7 @@ function renderProspects() {
             </span>
             <span>${escapeHtml(item.market)}</span>
             <span>${escapeHtml(item.source)}</span>
-            <span>${scoreBadge(item)}</span>
+            <span><span class="prob-grade grade-${lead.grade}">${lead.grade}</span><span class="score">${lead.probability}%</span></span>
             <span><span class="badge">${escapeHtml(item.status)}</span></span>
           </button>
         `
@@ -694,10 +723,6 @@ function renderProspects() {
   `;
 }
 
-function scoreBadge(prospect) {
-  const { probability, grade } = computeLeadScore(prospect);
-  return `<span class="prob-grade grade-${grade}">${grade}</span><span class="score">${probability}%</span>`;
-}
 
 function renderProspectDetail() {
   const prospect = getSelectedProspect();
@@ -5244,6 +5269,36 @@ function queueTopProspects() {
   if (candidates.length) addLog(`${candidates.length} 个高分潜客加入发信队列`);
 }
 
+// 质量分 A/B 级、可入队（未退订/未入队/未回复/不在冷却）的优质客户
+function isQualityQueueable(p) {
+  if (p.optOut) return false;
+  if (["已入队", "已回复"].includes(p.status)) return false;
+  if (inCooldown(p)) return false;
+  return ["A", "B"].includes(computeLeadScore(p).grade);
+}
+
+// 一键把优质客户（质量分 A/B 级）批量加入触达队列——首触待人工审批发送
+function queueQualityLeads() {
+  const eligible = state.prospects.filter(isQualityQueueable);
+  if (!eligible.length) {
+    addLog("暂无 A/B 级优质客户可入队（可先『批量补全联系方式』提升质量分，或先触达积累互动信号）");
+    saveState();
+    render();
+    return 0;
+  }
+  // 高分优先入队
+  const ordered = [...eligible].sort((a, b) => computeLeadScore(b).probability - computeLeadScore(a).probability);
+  let gradeA = 0;
+  ordered.forEach((p) => {
+    if (computeLeadScore(p).grade === "A") gradeA += 1;
+    queueProspect(p, false);
+  });
+  addLog(`已把 ${ordered.length} 家优质客户加入触达队列（A 级 ${gradeA} · B 级 ${ordered.length - gradeA}），首封待你在「队列/邮件」审批发送`);
+  saveState();
+  render();
+  return ordered.length;
+}
+
 function queueTopWhatsappProspects() {
   const limit = Math.min(state.campaign.dailyLimit, state.management.rules.whatsappDailyLimit, 8);
   const candidates = [...state.prospects]
@@ -5978,6 +6033,11 @@ elements.exportQueries.addEventListener("click", exportQueries);
 
 elements.prospectFilter.addEventListener("input", renderProspects);
 elements.statusFilter.addEventListener("change", renderProspects);
+if (elements.gradeFilter) elements.gradeFilter.addEventListener("change", renderProspects);
+if (elements.prospectSort) elements.prospectSort.addEventListener("change", renderProspects);
+if (elements.queueQualityLeads) {
+  elements.queueQualityLeads.addEventListener("click", () => queueQualityLeads());
+}
 
 elements.enrichProspects.addEventListener("click", () => {
   state.prospects = enrichProspectList(state.prospects, state.campaign);

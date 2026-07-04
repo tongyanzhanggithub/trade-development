@@ -1,4 +1,4 @@
-window.__APP_V = "14";
+window.__APP_V = "15";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -717,11 +717,24 @@ function renderProspectDetail() {
       </div>
       <div>
         <dt>联系人</dt>
-        <dd>${escapeHtml(prospect.contactName)} · ${escapeHtml(prospect.role)}</dd>
+        <dd>${escapeHtml(prospect.contactName)} · ${escapeHtml(prospect.role)}${
+          prospect.contactSource
+            ? ` <span class="channel-badge ${prospect.contactSource === "webhook" ? "whatsapp" : prospect.contactSource === "claude" ? "email" : "relay"}">${contactSourceLabel(prospect.contactSource)}</span>`
+            : ""
+        }</dd>
       </div>
       <div>
-        <dt>邮箱</dt>
-        <dd>${escapeHtml(prospect.email || "待补全")} · ${escapeHtml(prospect.emailStatus)}</dd>
+        <dt>邮箱${prospect.emailCandidates?.length > 1 ? "候选" : ""}</dt>
+        <dd>${
+          prospect.emailCandidates?.length
+            ? prospect.emailCandidates
+                .map(
+                  (c, i) =>
+                    `<div class="email-cand ${i === 0 ? "primary" : ""}" data-set-email="${escapeHtml(c.email)}" title="点此设为主邮箱">${escapeHtml(c.email)} <span class="cand-conf">${c.confidence}% · ${escapeHtml(c.pattern)}</span></div>`
+                )
+                .join("")
+            : `${escapeHtml(prospect.email || "待补全")} · ${escapeHtml(prospect.emailStatus)}`
+        }</dd>
       </div>
       <div>
         <dt>WhatsApp</dt>
@@ -743,9 +756,22 @@ function renderProspectDetail() {
         <dt>公司规模</dt>
         <dd>${escapeHtml(prospect.companySize)} · 置信度 ${prospect.confidence}%</dd>
       </div>
+      ${
+        prospect.companyProfile || prospect.fitNote
+          ? `<div><dt>AI 画像</dt><dd>${escapeHtml(prospect.companyProfile || "")}${
+              prospect.fitNote
+                ? ` <strong>匹配：${escapeHtml(prospect.fitNote)}${typeof prospect.fitScore === "number" ? `（${prospect.fitScore}%）` : ""}</strong>`
+                : ""
+            }</dd></div>`
+          : ""
+      }
     </dl>
     ${renderLeadScorePanel(prospect)}
     <div class="detail-actions">
+      <button class="primary-button" data-action="find-contact" type="button" title="真实源(Hunter/Apollo via Webhook)优先，否则 Claude 推测，兜底本地规则">
+        <svg><use href="#icon-search" /></svg>
+        <span>AI 找联系人</span>
+      </button>
       <button class="ghost-button" data-action="approve-prospect" type="button">
         <svg><use href="#icon-check" /></svg>
         <span>审核通过</span>
@@ -2689,21 +2715,65 @@ function domainToCompany(website) {
   return capitalize(domain.replace(/[-_]+/g, " "));
 }
 
+const ENRICH_FIRST_NAMES = ["Anna", "Mark", "Carla", "Omar", "Elin", "Lucas", "Maya", "David", "Sofia", "Nina", "Jonas", "Rita"];
+const ENRICH_LAST_NAMES = ["Weber", "Lewis", "Mendes", "Saeed", "Larsson", "Miller", "Khan", "Brown", "Garcia", "Hassan", "Smith", "Rossi"];
+
+// 按公司域名 + 决策人姓名生成多个候选邮箱（带置信度与模式），供人工挑选/后续验证
+function buildEmailCandidates(website, contactName, roleAlias) {
+  if (!website) return [];
+  const domain = stripProtocol(website).replace(/^www\./, "").split("/")[0];
+  if (!domain || !domain.includes(".")) return [];
+  const parts = (contactName || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const first = parts[0] || "";
+  const last = parts.length > 1 ? parts[parts.length - 1] : "";
+  const cands = [];
+  const push = (local, confidence, pattern) => {
+    if (local && !cands.some((c) => c.email === `${local}@${domain}`)) {
+      cands.push({ email: `${local}@${domain}`, confidence, pattern });
+    }
+  };
+  if (first && last) {
+    push(`${first}.${last}`, 62, "firstname.lastname");
+    push(`${first[0]}${last}`, 55, "flastname");
+    push(first, 48, "firstname");
+  } else if (first) {
+    push(first, 50, "firstname");
+  }
+  push(roleAlias || "sales", 44, `role (${roleAlias || "sales"})`);
+  push("info", 40, "info");
+  push("sales", 38, "sales");
+  return cands.sort((a, b) => b.confidence - a.confidence).slice(0, 4);
+}
+
 function enrichProspectList(prospects, campaign) {
-  const firstNames = ["Anna", "Mark", "Carla", "Omar", "Elin", "Lucas", "Maya", "David", "Sofia", "Nina", "Jonas", "Rita"];
-  const lastNames = ["Weber", "Lewis", "Mendes", "Saeed", "Larsson", "Miller", "Khan", "Brown", "Garcia", "Hassan", "Smith", "Rossi"];
-  const aliases = ["sourcing", "purchasing", "procurement", "buying", "import", "sales"];
+  const aliasByType = {
+    "importer distributor": "purchasing",
+    "retailer chain buyer": "buying",
+    "brand private label": "sourcing",
+    wholesaler: "sales",
+    "contractor project buyer": "procurement"
+  };
+  const roleAlias = aliasByType[campaign.customerType] || "sourcing";
 
   return prospects.map((prospect, index) => {
-    const alias = aliases[index % aliases.length];
+    const contactName =
+      prospect.contactName && !["待确认", "待补全", "待确认采购角色"].includes(prospect.contactName)
+        ? prospect.contactName
+        : `${ENRICH_FIRST_NAMES[index % ENRICH_FIRST_NAMES.length]} ${ENRICH_LAST_NAMES[(index + 3) % ENRICH_LAST_NAMES.length]}`;
+    const candidates = prospect.email
+      ? [{ email: prospect.email, confidence: 90, pattern: "导入原始邮箱" }]
+      : buildEmailCandidates(prospect.website, contactName, roleAlias);
     return {
       ...prospect,
-      contactName:
-        prospect.contactName && !["待确认", "待补全"].includes(prospect.contactName)
-          ? prospect.contactName
-          : `${firstNames[index % firstNames.length]} ${lastNames[(index + 3) % lastNames.length]}`,
-      email: prospect.email || (prospect.website ? `${alias}@${prospect.website}` : ""),
-      emailStatus: prospect.email || prospect.website ? "待验证" : "待查找",
+      contactName,
+      role:
+        prospect.role && !["待确认采购角色", "待确认"].includes(prospect.role)
+          ? prospect.role
+          : rolesForType(campaign.customerType)[index % rolesForType(campaign.customerType).length],
+      email: prospect.email || candidates[0]?.email || "",
+      emailCandidates: prospect.emailCandidates?.length ? prospect.emailCandidates : candidates,
+      contactSource: prospect.contactSource || "local",
+      emailStatus: prospect.email || candidates.length ? "待验证" : "待查找",
       phone: prospect.phone || makePhoneNumber(prospect.market, index),
       phoneStatus: "待人工确认",
       status: prospect.status === "已入队" ? prospect.status : "已丰富",
@@ -3119,7 +3189,7 @@ function setAutopilot(enabled) {
   state.autopilot = { ...(state.autopilot || { intervalSec: 8 }), enabled };
   if (enabled) {
     startAutopilotTimer();
-    addLog("自动驾驶已开启：自动执行 线索补全验证→评分入队→到期发送→回传→跨渠道接力→AI 回复草稿");
+    addLog("自动驾驶已开启：自动 找客户→补全联系方式→验证→评分→备好触达方案；发送始终等你审批（Agent 审批卡 / 队列 / 审批中心）");
     saveState();
     render();
     autopilotTick();
@@ -3153,42 +3223,22 @@ async function autopilotTick() {
     setJobDone("job-verify");
   }
 
-  // 2) 高分线索自动入队（遵守评分阈值、日上限、冷却期）
-  const queuedBefore = state.outbox.length + state.whatsappQueue.length;
-  queueTopProspects();
-  queueTopWhatsappProspects();
-  const queuedDelta = state.outbox.length + state.whatsappQueue.length - queuedBefore;
-  if (queuedDelta > 0) {
-    actions.push(`自动入队 ${queuedDelta} 条触达`);
-    setJobDone("job-queue");
-  }
-
-  // 3) 到期邮件批量发送（webhook 模式走真实派发，本地模拟并生成回传）
-  const sent = await sendDueEmails(true);
-  if (sent) actions.push(`发送 ${sent} 封到期邮件`);
-
-  // 4) 已审批 WhatsApp 发送
-  if (state.settings.mode === "webhook") {
-    const approved = state.whatsappQueue.filter((item) => item.status === "已审批");
-    if (approved.length && webhookUrl("whatsapp")) {
-      const result = await callWebhook("whatsapp", { messages: approved });
-      if (result.ok) {
-        approved.forEach((item) => {
-          item.status = "已发送";
-          item.sentAt = new Date().toISOString();
-          item.delivered = true;
-        });
-        actions.push(`派发 ${approved.length} 条 WhatsApp`);
-      }
+  // 2) 高分线索入队暂存（仅无 Agent 任务时；Agent 任务运行时由审批卡把关，不越过审批自动入队）
+  //    ★ 发送必须人工审批：自动驾驶只把高分线索备到「待发送」，不自动发出
+  if (!state.agent?.task || state.agent.task.status === "draft") {
+    const queuedBefore = state.outbox.length + state.whatsappQueue.length;
+    queueTopProspects();
+    queueTopWhatsappProspects();
+    const queuedDelta = state.outbox.length + state.whatsappQueue.length - queuedBefore;
+    if (queuedDelta > 0) {
+      actions.push(`备好 ${queuedDelta} 条待发送（等你审批）`);
+      setJobDone("job-queue");
     }
-  } else {
-    const waSent = deliverApprovedWhatsapp(true);
-    if (waSent) actions.push(`发送 ${waSent} 条已审批 WhatsApp`);
   }
 
-  // 5) 跨渠道接力自动执行
+  // 3) 跨渠道接力（生成的是待发送/待确认，同样等人工发送，不自动发出）
   const relayed = relayPass(true);
-  if (relayed) actions.push(`跨渠道接力 ${relayed} 条`);
+  if (relayed) actions.push(`跨渠道接力备好 ${relayed} 条`);
 
   // 6) 已回复且未响应的会话，自动生成 AI 回复草稿送审批
   //    注意：忽略「已取消」的触达事件（回复即停产生），否则被取消的未来邮件会掩盖客户回复
@@ -3827,6 +3877,129 @@ function highestRiskLevel(risks) {
   return risks.length ? "low" : null;
 }
 
+/* ---------- 智能找联系方式（真实源 Webhook 优先 → Claude 推测 → 本地兜底） ---------- */
+
+const AI_CONTACT_SCHEMA = {
+  type: "object",
+  properties: {
+    contact_name: { type: "string", description: "推测的最可能对口决策人姓名（英文），拿不准就给常见采购负责人占位" },
+    contact_role: { type: "string", description: "决策人职位中文，如 采购经理 / Sourcing Manager" },
+    email_candidates: {
+      type: "array",
+      description: "3-5 个候选邮箱（基于域名和姓名的常见模式），按可能性从高到低",
+      items: {
+        type: "object",
+        properties: {
+          email: { type: "string" },
+          confidence: { type: "integer", description: "0-100 可能性" },
+          pattern: { type: "string", description: "邮箱模式说明，如 firstname.lastname" }
+        },
+        required: ["email", "confidence", "pattern"],
+        additionalProperties: false
+      }
+    },
+    company_profile: { type: "string", description: "一句话公司画像（业务、规模线索、采购可能性）" },
+    fit_note: { type: "string", description: "是否对口这次开发的判断，一句话" },
+    fit_score: { type: "integer", description: "0-100 与本次任务的匹配度" }
+  },
+  required: ["contact_name", "contact_role", "email_candidates", "company_profile", "fit_note", "fit_score"],
+  additionalProperties: false
+};
+
+function applyContact(prospectId, data, source) {
+  state.prospects = state.prospects.map((p) => {
+    if (p.id !== prospectId) return p;
+    const candidates = (data.email_candidates || []).filter((c) => c && c.email);
+    return {
+      ...p,
+      contactName: data.contact_name || p.contactName,
+      role: data.contact_role || p.role,
+      email: candidates[0]?.email || p.email,
+      emailCandidates: candidates.length ? candidates : p.emailCandidates,
+      emailStatus: candidates.length || p.email ? "待验证" : "待查找",
+      phone: data.phone || p.phone,
+      companyProfile: data.company_profile || p.companyProfile,
+      fitNote: data.fit_note || p.fitNote,
+      fitScore: typeof data.fit_score === "number" ? data.fit_score : p.fitScore,
+      contactSource: source,
+      status: p.status === "已入队" ? p.status : "已丰富",
+      confidence: source === "webhook" ? 96 : Math.min(94, (p.confidence || 50) + 10)
+    };
+  });
+}
+
+async function enrichContactAI(prospectId, quiet = false) {
+  const prospect = state.prospects.find((p) => p.id === prospectId);
+  if (!prospect) return "none";
+
+  // 1) 真实源：邮箱查找/验证 Webhook（Hunter/Apollo/Dropcontact 等）
+  if (state.settings.mode === "webhook" && webhookUrl("enrich")) {
+    try {
+      const result = await callWebhook("enrich", {
+        company: prospect.company,
+        domain: prospect.website,
+        market: prospect.market,
+        role_hint: state.campaign.customerType
+      });
+      const d = result.data || {};
+      if (result.ok && (d.email || d.contact_name || d.email_candidates?.length)) {
+        applyContact(
+          prospectId,
+          {
+            contact_name: d.contact_name || d.contactName,
+            contact_role: d.contact_role || d.role,
+            email_candidates: d.email_candidates || (d.email ? [{ email: d.email, confidence: 95, pattern: "verified" }] : []),
+            phone: d.phone,
+            company_profile: d.company_profile,
+            fit_note: d.fit_note,
+            fit_score: d.fit_score
+          },
+          "webhook"
+        );
+        if (!quiet) addLog(`真实源找到联系方式（已验证）：${prospect.company}`);
+        saveState();
+        render();
+        return "webhook";
+      }
+    } catch (error) {
+      if (!quiet) addLog(`邮箱查找 Webhook 失败，改用 AI 推测：${error.message}`);
+    }
+  }
+
+  // 2) Claude 智能推测决策人 + 候选邮箱 + 公司画像 + 匹配度
+  if (aiEnabled()) {
+    try {
+      const system =
+        "你是外贸找客助手。根据公司名与官网域名，推测最可能对口的采购决策人姓名与职位、按常见企业邮箱模式生成候选邮箱（基于该域名，标注可能性），给出公司画像与本次开发的匹配度。email 必须用给定域名。不要编造已验证事实，均为推测。";
+      const user = `公司: ${prospect.company}
+官网域名: ${prospect.website || "（未知）"}
+市场: ${prospect.market}
+我方要开发的客户类型: ${state.campaign.customerType}
+我方产品: ${state.campaign.product}`;
+      const data = await callClaude(system, user, AI_CONTACT_SCHEMA, 900);
+      applyContact(prospectId, data, "claude");
+      if (!quiet) addLog(`Claude 推测联系人与候选邮箱：${prospect.company}（匹配度 ${data.fit_score}%）`);
+      saveState();
+      render();
+      return "claude";
+    } catch (error) {
+      if (!quiet) addLog(`Claude 找联系人失败，用本地规则：${error.message}`);
+    }
+  }
+
+  // 3) 本地规则兜底（多候选邮箱）
+  const enriched = enrichProspectList([prospect], state.campaign)[0];
+  state.prospects = state.prospects.map((p) => (p.id === prospectId ? enriched : p));
+  if (!quiet) addLog(`本地规则补全联系方式（候选邮箱）：${prospect.company}`);
+  saveState();
+  render();
+  return "local";
+}
+
+function contactSourceLabel(source) {
+  return source === "webhook" ? "真实验证" : source === "claude" ? "AI 推测" : "规则推测";
+}
+
 async function generateSequenceAI() {
   const prospect = getSelectedProspect();
   if (!prospect) {
@@ -4043,9 +4216,8 @@ function confirmAgentTask() {
   state.searchPlan = generateSearchPlan(state.campaign);
   task.status = "prospecting";
   addLog(
-    `Agent 任务已启动（${task.approvalMode === "review" ? "逐条审批" : task.approvalMode === "spot" ? "批量抽审" : "全自动"}）：已生成 ${state.searchPlan.length} 条搜索任务。去「搜索」导入真实结果，或点「用演示数据体验」`
+    `Agent 任务已启动（${task.approvalMode === "spot" ? "批量审批" : "逐条审批"}）：已生成 ${state.searchPlan.length} 条搜索任务。去「搜索」导入真实结果，或点「用演示数据体验」`
   );
-  if (task.approvalMode === "auto" && !state.autopilot?.enabled) setAutopilot(true);
   saveState();
   render();
 }
@@ -4083,26 +4255,44 @@ function agentOnProspectsImported(imported) {
     state.agent.approvals.push({ id: makeId("appr"), prospectId: p.id, status: "pending", at: timestamp() });
   });
 
-  if (task.approvalMode !== "review") {
-    state.agent.approvals.filter((a) => a.status === "pending").forEach((a) => agentApprove(a, true));
-    addLog(`Agent：${qualified.length} 个高分客户已按「${task.approvalMode === "spot" ? "批量抽审" : "全自动"}」模式自动通过并入队`);
-  } else if (qualified.length) {
-    addLog(`Agent：${qualified.length} 个高分客户已生成触达方案，等待审批`);
+  // 发送必须人工审批：所有模式都只生成待审批触达方案，不自动发送
+  if (qualified.length) {
+    addLog(`Agent：找到并验证 ${qualified.length} 个高分客户，触达方案已生成，等待你审批发送`);
   }
   task.status = state.agent.approvals.some((a) => a.status === "pending") ? "reviewing" : "outreach";
+
+  // 配置了真实源(邮箱查找 Webhook)时，自动为入围客户找真实验证的联系方式
+  if (state.settings.mode === "webhook" && webhookUrl("enrich") && qualified.length) {
+    (async () => {
+      for (const { p } of qualified) await enrichContactAI(p.id, true);
+      addLog(`真实源已为 ${qualified.length} 个客户补全验证联系方式`);
+    })();
+  }
 }
 
-function agentApprove(approval, quiet = false) {
+async function agentApprove(approval, quiet = false) {
   const task = state.agent.task;
   const prospect = state.prospects.find((p) => p.id === approval.prospectId);
   if (!prospect) {
     approval.status = "skipped";
     return;
   }
+  // 人工审批通过 = 放行并发送首触（这就是发送前的人工闸口）
   if (task.parsed.use_email !== false) queueProspect(prospect, true);
   if (task.parsed.use_whatsapp && prospect.phone) queueWhatsappProspect(prospect, true);
+  await sendDueEmails(true);
+  if (state.settings.mode === "webhook") {
+    const approved = state.whatsappQueue.filter((i) => i.prospectId === prospect.id && i.status === "已审批");
+    if (approved.length && webhookUrl("whatsapp")) {
+      const result = await callWebhook("whatsapp", { messages: approved });
+      if (result.ok) approved.forEach((i) => { i.status = "已发送"; i.sentAt = new Date().toISOString(); i.delivered = true; });
+    }
+  } else {
+    // 本地：已审批的 WhatsApp 立即发送；待人工确认的保持等待（受审批规则约束）
+    deliverApprovedWhatsapp(true);
+  }
   approval.status = "approved";
-  if (!quiet) addLog(`已批准触达：${prospect.company}`);
+  if (!quiet) addLog(`已审批并发送首触：${prospect.company}`);
   if (!state.agent.approvals.some((a) => a.status === "pending")) task.status = "outreach";
 }
 
@@ -4391,7 +4581,7 @@ function renderAgentTaskCard() {
   const sourceTag = task.source === "claude" ? "Claude 解析" : "本地规则解析";
 
   if (task.status !== "draft") {
-    const modeLabel = { review: "逐条审批", spot: "批量抽审", auto: "全自动" }[task.approvalMode];
+    const modeLabel = { review: "逐条审批", spot: "批量审批", auto: "批量审批" }[task.approvalMode] || "逐条审批";
     const rec = agentRecurring();
     const intervalOptions = [
       ["daily", "每天"],
@@ -4467,11 +4657,11 @@ function renderAgentTaskCard() {
         <label class="toggle-row"><input id="agentFWa" type="checkbox" ${parsed.use_whatsapp ? "checked" : ""} /><span>WhatsApp 接力</span></label>
       </div>
       <div class="segmented" role="group" aria-label="审批模式">
-        <button class="segment ${task.approvalMode === "review" ? "is-active" : ""}" data-approval-mode="review" type="button" title="每个客户人工确认后发送（推荐冷启动）">逐条审批</button>
-        <button class="segment ${task.approvalMode === "spot" ? "is-active" : ""}" data-approval-mode="spot" type="button" title="自动发送，用户抽查">批量抽审</button>
-        <button class="segment ${task.approvalMode === "auto" ? "is-active" : ""}" data-approval-mode="auto" type="button" title="全自动 + 自动驾驶">全自动</button>
+        <button class="segment ${task.approvalMode === "review" ? "is-active" : ""}" data-approval-mode="review" type="button" title="逐个查看并发送（推荐冷启动）">逐条审批</button>
+        <button class="segment ${task.approvalMode === "spot" ? "is-active" : ""}" data-approval-mode="spot" type="button" title="一次审查一批后「全部通过并发送」">批量审批</button>
       </div>
     </div>
+    <p class="connector-hint">发送始终需人工审批：Agent 自动找客户、补全联系方式、验证评分并生成触达方案，你审批通过后才发出。</p>
     <div class="button-row">
       <button class="primary-button" data-agent-action="confirm" type="button"><svg><use href="#icon-rocket" /></svg><span>确认并启动</span></button>
       <button class="ghost-button" data-agent-action="discard" type="button">重新解析</button>
@@ -5458,9 +5648,29 @@ elements.topProspects.addEventListener("click", (event) => {
 });
 
 elements.prospectDetail.addEventListener("click", (event) => {
+  // 点候选邮箱设为主邮箱
+  const setEmail = event.target.closest("[data-set-email]")?.dataset.setEmail;
+  if (setEmail) {
+    const sel = getSelectedProspect();
+    if (sel) {
+      state.prospects = state.prospects.map((p) => (p.id === sel.id ? { ...p, email: setEmail, emailStatus: "待验证" } : p));
+      addLog(`已设为主邮箱：${setEmail}`);
+      saveState();
+      render();
+    }
+    return;
+  }
+
   const action = event.target.closest("[data-action]")?.dataset.action;
   const prospect = getSelectedProspect();
   if (!action || !prospect) return;
+
+  if (action === "find-contact") {
+    addLog(`正在为 ${prospect.company} 找联系人…`);
+    renderLogs();
+    enrichContactAI(prospect.id);
+    return;
+  }
 
   if (action === "write-email") {
     state.sequence = buildEmailSequence(state.campaign, prospect);
@@ -5730,14 +5940,14 @@ elements.agentTaskCard.addEventListener("click", (event) => {
   if (event.target.closest("#agentRunCycleNow")) agentRunCycle(true);
 });
 
-elements.agentApprovalList.addEventListener("click", (event) => {
+elements.agentApprovalList.addEventListener("click", async (event) => {
   const approveId = event.target.closest("[data-agent-approve]")?.dataset.agentApprove;
   const skipId = event.target.closest("[data-agent-skip]")?.dataset.agentSkip;
   if (!approveId && !skipId) return;
   const approval = state.agent.approvals.find((a) => a.id === (approveId || skipId));
   if (!approval) return;
   if (approveId) {
-    agentApprove(approval);
+    await agentApprove(approval);
   } else {
     approval.status = "skipped";
     addLog("已跳过该客户");
@@ -5747,10 +5957,12 @@ elements.agentApprovalList.addEventListener("click", (event) => {
   render();
 });
 
-elements.agentApproveAll.addEventListener("click", () => {
+elements.agentApproveAll.addEventListener("click", async () => {
   const pending = state.agent.approvals.filter((a) => a.status === "pending");
-  pending.forEach((approval) => agentApprove(approval, true));
-  addLog(`已批量批准 ${pending.length} 个触达方案并入队发送`);
+  for (const approval of pending) {
+    await agentApprove(approval, true);
+  }
+  addLog(`已审批并发送 ${pending.length} 个触达方案`);
   saveState();
   render();
 });

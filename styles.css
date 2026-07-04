@@ -2482,6 +2482,40 @@ body.dark .agent-hot-card {
   border-color: rgba(251, 146, 60, 0.35);
 }
 
+.email-cand {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 8px;
+  margin: 2px 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.email-cand:hover {
+  border-color: var(--teal);
+}
+
+.email-cand.primary {
+  background: #e9f4f1;
+  border-color: var(--teal);
+  font-weight: 700;
+}
+
+.email-cand .cand-conf {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+body.dark .email-cand.primary {
+  background: rgba(15, 118, 110, 0.25);
+}
+
 .agent-recurring {
   display: flex;
   align-items: center;

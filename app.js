@@ -1,4 +1,4 @@
-window.__APP_V = "28";
+window.__APP_V = "29";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -5043,6 +5043,37 @@ function sensitiveTopic(text) {
 // 可自动答复的标准问题意图
 const AGENT_STANDARD_INTENTS = ["price", "sample", "moq", "cert", "leadtime", "other"];
 
+// 各重庆品类的常见反问 FAQ（喂给 Claude 作答；不含任何具体价格/账期承诺，敏感项仍留给销售）
+const CQ_KNOWLEDGE = {
+  moto: `品类：重庆摩托车配件（隆鑫/宗申/力帆供应链）。常见问答：
+- 混柜：可以把不同车型（CG125/150、GN125、CB、Bajaj/TVS 兼容、三轮车/tricycle 动力）和大量 item number 混在一个 20'/40' 柜里，方便试销。
+- MOQ：首单灵活，起步可用整柜混合 SKU；具体阶梯由销售确认。
+- 认证：CCC、SONCAP（尼日利亚等）、ISO 9001，可提供测试报告与目的国所需文件。
+- 覆盖车型：CG125/150、GN125、CB 系列、Bajaj/TVS 兼容、三轮车动力件等快消件。
+- 付款方式：常见 T/T 或即期 L/C；具体条款/账期由销售确认。
+- 包装：中性/OEM 出口包装，可定制 logo。
+- 交期：样品 5-7 天，大货确认后 25-35 天。`,
+  auto: `品类：重庆汽车零部件（长安配套供应链）。常见问答：
+- 覆盖：滤清器、刹车片、悬挂、灯具等售后快消件，覆盖常见车型；可提供 OE 交叉参照。
+- 混柜/MOQ：可混不同参照号一个柜，首单灵活；阶梯由销售确认。
+- 认证：IATF 16949、E-mark、ISO 9001，可提供测试报告。
+- 付款方式：常见 T/T 或即期 L/C；具体条款由销售确认。
+- 交期：样品 5-7 天，大货 25-35 天。`,
+  electronics: `品类：重庆笔电/消费电子（全球最大笔电产业带）。常见问答：
+- 产品：笔电、外设、适配器、IT 配件；支持 ODM/OEM 贴牌（logo、包装、定制）。
+- 认证：CE、FCC、RoHS，按目的国准备文件。
+- MOQ：现货 SKU 与 ODM 不同，由销售确认。
+- 付款方式：常见 T/T 或 L/C；具体条款由销售确认。
+- 交期：现货 7-15 天，ODM/定制按项目确认。`,
+  machinery: `品类：重庆通用机械/工业装备。常见问答：
+- 范围：项目级、按规格匹配的机械与工业设备。
+- 支持：备件清单、售后支持、安装/调试指导。
+- 认证：CE、ISO 9001，全套出口文件，出口木箱包装。
+- MOQ：通常按台/按项目，由销售确认。
+- 付款方式：常见 T/T 或 L/C，里程碑条款由销售确认。
+- 交期：按设备类型与产能确认。`
+};
+
 function autoReplyTemplate(prospect, intentKey) {
   const first = firstName(prospect);
   const product = state.campaign.product;
@@ -5055,7 +5086,36 @@ function autoReplyTemplate(prospect, intentKey) {
     cert: `Hi ${first}, we can provide the relevant certificates and test reports for ${product}. Our sales colleague will attach the documents your market requires.`,
     other: `Hi ${first}, thanks for your reply. I've shared your message with our sales colleague, who will follow up with the details.`
   };
-  return `${bodies[intentKey] || bodies.other}\n\nBest regards,\n${sender} (AI assistant)`;
+  // 品类专属答复（覆盖通用版；不承诺具体价格/账期）
+  const catBodies = {
+    moto: {
+      moq: `Hi ${first}, MOQ is flexible for a first order — we can mix different models (CG125/150, GN125, CB, Bajaj/TVS-compatible, tricycle) and many item numbers in one 20'/40' container so you can test demand. Our sales colleague will confirm the exact tiers.`,
+      cert: `Hi ${first}, we provide CCC, SONCAP and ISO 9001 plus test reports, and prepare the documents your market requires (e.g. SONCAP for Nigeria). Our sales colleague will attach what you need.`,
+      leadtime: `Hi ${first}, samples take about 5-7 days and bulk 25-35 days after order confirmation. Our sales colleague will confirm timing for your model list and quantity.`,
+      sample: `Hi ${first}, happy to help — I'll have our team prepare a fast-moving-parts catalog and sample policy covering your common models; a sales colleague will follow up with specifics.`
+    },
+    auto: {
+      moq: `Hi ${first}, MOQ is flexible and we can mix different references in one container. Our sales colleague will confirm the exact tiers for your model coverage.`,
+      cert: `Hi ${first}, we provide IATF 16949, E-mark and ISO 9001 with test reports, and can supply an OE cross-reference. Our sales colleague will attach the documents your market requires.`,
+      leadtime: `Hi ${first}, samples take about 5-7 days and bulk 25-35 days after confirmation. Our sales colleague will confirm timing for your quantity.`,
+      sample: `Hi ${first}, happy to help — our team will prepare a catalog of best-selling references with an OE cross-reference; a sales colleague will follow up with the specifics.`
+    },
+    electronics: {
+      moq: `Hi ${first}, MOQ depends on whether it's a stock SKU or an ODM/private-label order. Our sales colleague will confirm the exact tiers for your configuration.`,
+      cert: `Hi ${first}, our products are CE / FCC / RoHS ready and we prepare the documents your destination requires. Our sales colleague will attach the certificates you need.`,
+      leadtime: `Hi ${first}, stock items ship in about 7-15 days; ODM/custom orders are confirmed per project. Our sales colleague will confirm the timing.`,
+      sample: `Hi ${first}, happy to help — our team will prepare a product list with specs (and ODM options if you carry a private label); a sales colleague will follow up.`
+    },
+    machinery: {
+      moq: `Hi ${first}, orders are typically per unit or per project. If you share the equipment type and capacity, our sales colleague will confirm the details.`,
+      cert: `Hi ${first}, we provide CE and ISO 9001 with full export documents and proper export crating. Our sales colleague will attach the documents your project requires.`,
+      leadtime: `Hi ${first}, lead time depends on equipment type and capacity. Share your specs and our sales colleague will confirm the timing and commissioning support.`,
+      sample: `Hi ${first}, for equipment we prepare a spec sheet, spare-parts list and after-sales terms rather than a physical sample; a sales colleague will follow up with these.`
+    }
+  };
+  const cat = catBodies[state.campaign.presetKey] || {};
+  const body = cat[intentKey] || bodies[intentKey] || bodies.other;
+  return `${body}\n\nBest regards,\n${sender} (AI assistant)`;
 }
 
 async function generateAutoReply(prospect, customerText, intentKey) {
@@ -5063,10 +5123,13 @@ async function generateAutoReply(prospect, customerText, intentKey) {
     try {
       const system =
         "你是外贸售前 AI 助手，只负责答复标准售前问题。严格护栏：绝对不承诺任何具体价格、折扣、账期/付款条件或独家代理——这些必须留给销售同事。回复中要明确告知客户详细报价/条款将由销售同事跟进。基于提供的产品知识库作答。回复为英文、简洁、专业，含称呼与 AI 助手署名。";
+      const categoryFaq = CQ_KNOWLEDGE[state.campaign.presetKey] || "";
+      const userFaq = state.campaign.knowledgeBase || "";
+      const combinedFaq = [categoryFaq, userFaq].filter(Boolean).join("\n\n") || "（未提供，用通用话术）";
       const user = `产品: ${state.campaign.product}
 卖点: ${state.campaign.valueProps}
 认证: ${state.campaign.certifications}
-产品知识库/FAQ: ${state.campaign.knowledgeBase || "（未提供，用通用话术）"}
+产品知识库/FAQ: ${combinedFaq}
 署名: ${state.campaign.senderName}
 
 客户来信: ${customerText}`;

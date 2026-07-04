@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>自动化外贸开发系统</title>
-    <link rel="stylesheet" href="./styles.css?v=18" />
+    <link rel="stylesheet" href="./styles.css?v=19" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
@@ -440,6 +440,24 @@
             </div>
             <div class="query-list" id="queryList"></div>
           </section>
+          <section class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Competitor channels</p>
+                <h2>竞品渠道反查</h2>
+              </div>
+            </div>
+            <label>
+              <span>粘贴竞品的 Where-to-buy / 经销商列表 / dealer locator 页面链接，Claude 联网抽出他家所有经销商作为你的高意向线索（需在设置配置 AI 引擎）</span>
+              <div class="query-toolbar">
+                <input id="competitorUrl" type="url" placeholder="https://competitor.com/where-to-buy" />
+                <button class="primary-button" id="reverseCompetitor" type="button">
+                  <svg><use href="#icon-shuffle" /></svg>
+                  <span>反查经销商</span>
+                </button>
+              </div>
+            </label>
+          </section>
           <section class="panel import-panel">
             <div class="panel-heading">
               <div>
@@ -471,6 +489,10 @@
               <h2 id="prospectsTitle">潜客队列</h2>
             </div>
             <div class="topbar-actions">
+              <button class="primary-button" id="bulkEnrichContacts" type="button" title="对所有缺联系方式的新线索一键批量找联系人（真实源/AI/规则，遵循已配置的引擎）">
+                <svg><use href="#icon-users" /></svg>
+                <span>批量补全联系方式</span>
+              </button>
               <button class="ghost-button" id="enrichProspects" type="button">
                 <svg><use href="#icon-link" /></svg>
                 <span>补全资料</span>
@@ -1099,11 +1121,11 @@
 
     <div class="toast-stack" id="toastStack" aria-live="polite"></div>
 
-    <script src="./app.js?v=18" defer></script>
+    <script src="./app.js?v=19" defer></script>
     <script>
       // 缓存哨兵：若浏览器仍加载旧版 app.js（版本不匹配或加载失败导致按钮失灵），给出明确提示
       window.addEventListener("load", () => {
-        if (window.__APP_V !== "18") {
+        if (window.__APP_V !== "19") {
           const tip = document.createElement("div");
           tip.style.cssText =
             "position:fixed;top:0;left:0;right:0;z-index:9999;padding:12px 16px;background:#c2410c;color:#fff;font-size:14px;text-align:center;font-weight:700;";

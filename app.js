@@ -1,4 +1,4 @@
-window.__APP_V = "18";
+window.__APP_V = "19";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -28,6 +28,8 @@ const elements = {
   copyQueries: $("#copyQueries"),
   runDiscovery: $("#runDiscovery"),
   webSearchFind: $("#webSearchFind"),
+  competitorUrl: $("#competitorUrl"),
+  reverseCompetitor: $("#reverseCompetitor"),
   createProspects: $("#createProspects"),
   loadImportExample: $("#loadImportExample"),
   importSearchResults: $("#importSearchResults"),
@@ -39,6 +41,7 @@ const elements = {
   statusFilter: $("#statusFilter"),
   prospectTable: $("#prospectTable"),
   prospectDetail: $("#prospectDetail"),
+  bulkEnrichContacts: $("#bulkEnrichContacts"),
   enrichProspects: $("#enrichProspects"),
   verifyProspects: $("#verifyProspects"),
   buildWhatsappProspects: $("#buildWhatsappProspects"),
@@ -772,6 +775,10 @@ function renderProspectDetail() {
       <button class="primary-button" data-action="find-contact" type="button" title="真实源(Hunter/Apollo via Webhook)优先，否则 Claude 推测，兜底本地规则">
         <svg><use href="#icon-search" /></svg>
         <span>AI 找联系人</span>
+      </button>
+      <button class="ghost-button" data-action="deep-dig-contact" type="button" title="Claude 联网翻这家官网 About/Team/Contact 页，找真实决策人与邮箱（需配置 AI 引擎）">
+        <svg><use href="#icon-robot" /></svg>
+        <span>官网深挖联系人</span>
       </button>
       <button class="ghost-button" data-action="find-lookalike" type="button" title="以这家为样本，联网(或本地)扩展出一批相似公司进线索池">
         <svg><use href="#icon-users" /></svg>
@@ -4036,7 +4043,13 @@ async function enrichContactAI(prospectId, quiet = false) {
 }
 
 function contactSourceLabel(source) {
-  return source === "webhook" ? "真实验证" : source === "claude" ? "AI 推测" : "规则推测";
+  return source === "webhook"
+    ? "真实验证"
+    : source === "claude-web"
+    ? "联网核实"
+    : source === "claude"
+    ? "AI 推测"
+    : "规则推测";
 }
 
 /* ---------- Claude 联网找客户（web search）+ 相似客户扩展 ---------- */
@@ -4082,7 +4095,18 @@ function extractJsonArray(text) {
   }
 }
 
-function prospectFromFound(item, fallbackMarket) {
+function extractJsonObject(text) {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  try {
+    return JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
+function prospectFromFound(item, fallbackMarket, sourceLabel = "Claude 联网") {
   const website = stripProtocol(item.website || item.domain || "").split("/")[0];
   const company = (item.company || item.name || domainToCompany(website) || "未命名公司").trim();
   const directWebsite =
@@ -4091,7 +4115,7 @@ function prospectFromFound(item, fallbackMarket) {
     id: makeId("prospect"),
     company,
     market: item.market || fallbackMarket,
-    source: "Claude 联网",
+    source: sourceLabel,
     website,
     contactName: "待补全",
     role: "待确认采购角色",
@@ -4132,34 +4156,41 @@ async function webSearchProspects(opts = {}) {
 
   try {
     const text = await callClaudeWebSearch(system, user, 4500);
-    const arr = extractJsonArray(text);
-    if (!Array.isArray(arr) || !arr.length) {
-      addLog("Claude 联网未返回可解析的公司列表，请重试或改用粘贴导入");
-      return 0;
-    }
-    const seenKeys = new Set(state.prospects.map((p) => p.website || p.company.toLowerCase()));
-    const fresh = [];
-    arr.forEach((item) => {
-      const p = prospectFromFound(item, markets[0] || "United States");
-      const key = p.website || p.company.toLowerCase();
-      if (!p.company || seenKeys.has(key)) return;
-      seenKeys.add(key);
-      fresh.push(p);
-    });
-    if (!fresh.length) {
-      addLog("联网找到的公司都已在库中（已去重）");
-      return 0;
-    }
-    state.prospects = [...fresh, ...state.prospects];
-    agentOnProspectsImported(fresh);
-    addLog(`Claude 联网找到 ${fresh.length} 家真实候选客户，已进线索池${state.agent?.task ? "并走漏斗" : "（去「潜客」审核）"}`);
-    saveState();
-    render();
-    return fresh.length;
+    return ingestFoundText(text, markets[0] || "United States", "Claude 联网", { quiet: opts.quiet });
   } catch (error) {
     addLog(`Claude 联网找客户失败：${error.message}`);
     return 0;
   }
+}
+
+// 把 Claude 联网返回的公司数组解析、去重并入池，返回新增数量（供联网找客户/相似客户/竞品反查复用）
+function ingestFoundText(text, fallbackMarket, sourceLabel, opts = {}) {
+  const arr = extractJsonArray(text);
+  if (!Array.isArray(arr) || !arr.length) {
+    if (!opts.quiet) addLog("Claude 联网未返回可解析的公司列表，请重试或改用粘贴导入");
+    return 0;
+  }
+  const seenKeys = new Set(state.prospects.map((p) => p.website || p.company.toLowerCase()));
+  const fresh = [];
+  arr.forEach((item) => {
+    const p = prospectFromFound(item, fallbackMarket, sourceLabel);
+    if (p.website && NON_COMPANY_DOMAIN.test(p.website.replace(/^www\./, ""))) return;
+    const key = p.website || p.company.toLowerCase();
+    if (!p.company || seenKeys.has(key)) return;
+    seenKeys.add(key);
+    fresh.push(p);
+  });
+  if (!fresh.length) {
+    if (!opts.quiet) addLog("联网找到的公司都已在库中（已去重）");
+    return 0;
+  }
+  state.prospects = [...fresh, ...state.prospects];
+  agentOnProspectsImported(fresh);
+  if (!opts.quiet)
+    addLog(`${sourceLabel}找到 ${fresh.length} 家候选客户，已进线索池${state.agent?.task ? "并走漏斗" : "（去「潜客」审核）"}`);
+  saveState();
+  render();
+  return fresh.length;
 }
 
 async function findLookalike(prospectId) {
@@ -4186,6 +4217,106 @@ async function findLookalike(prospectId) {
   saveState();
   render();
   return fresh.length;
+}
+
+// 竞品渠道反查：从竞品 Where-to-buy / 经销商列表页抽出他家所有经销商作为线索
+async function reverseCompetitorChannel(url) {
+  if (!url || !/^https?:\/\//i.test(url.trim())) {
+    addLog("请先粘贴一个完整的竞品经销商/Where-to-buy 页面链接（http/https 开头）");
+    return 0;
+  }
+  if (!aiEnabled()) {
+    addLog("未启用 Claude API：竞品渠道反查需在「设置 → AI 引擎」配置后使用");
+    navigateTo("settings");
+    return 0;
+  }
+  addLog(`Claude 正在联网反查竞品经销商：${url.trim()}…`);
+  renderLogs();
+  const markets = normalizeMarkets(state.campaign.markets);
+  const system =
+    "你是外贸找客助手，可联网搜索。任务：打开给定的经销商定位/Where-to-buy/dealer locator/authorized distributor/stockist 页面，抽取该页面列出的所有经销商/分销商/零售商公司。只输出一个 JSON 数组，不要额外文字，每个元素含 {company, website, market, note}（note 为一句中文，如“X 品牌授权经销商”）。排除品牌方本身与平台/目录站。找不到页面就用网络搜索该品牌的经销商。";
+  const user = `竞品经销商页面: ${url.trim()}
+我方产品: ${state.campaign.product}
+目标市场: ${markets.join(", ") || "不限"}`;
+  try {
+    const text = await callClaudeWebSearch(system, user, 4500);
+    const n = ingestFoundText(text, markets[0] || "United States", "竞品渠道反查");
+    if (n === 0) addLog("竞品反查未抽到新经销商（可能页面无列表或都已在库）");
+    return n;
+  } catch (error) {
+    addLog(`竞品渠道反查失败：${error.message}`);
+    return 0;
+  }
+}
+
+// 官网一键深挖联系人：Claude 联网翻公司官网 About/Team/Contact 页，找真实决策人与邮箱
+async function deepDigContact(prospectId, quiet = false) {
+  const prospect = state.prospects.find((p) => p.id === prospectId);
+  if (!prospect) return "none";
+  if (!aiEnabled()) {
+    addLog("未启用 Claude API：官网深挖联系人需在「设置 → AI 引擎」配置后使用");
+    if (!quiet) navigateTo("settings");
+    return "none";
+  }
+  if (!quiet) {
+    addLog(`Claude 正在联网深挖 ${prospect.company} 官网的采购决策人…`);
+    renderLogs();
+  }
+  const system =
+    "你是外贸找客助手，可联网搜索。任务：访问/搜索该公司官网，优先看 About/Team/Management/Contact/Wholesale 页面与领英，找出最对口的采购/进口决策人的真实姓名、职位、邮箱、电话。只输出一个 JSON 对象，不要额外文字：{contact_name, contact_role, email_candidates:[{email,confidence,pattern}], phone, company_profile, fit_note, fit_score}。email 用真实找到的（pattern 标 verified）；确实找不到就按该域名常见模式给候选并把 pattern 标 guessed。fit_score 为 0-100 数字。";
+  const user = `公司: ${prospect.company}
+官网域名: ${prospect.website || "（未知，请先联网找到官网）"}
+市场: ${prospect.market}
+我方要开发的客户类型: ${state.campaign.customerType}
+我方产品: ${state.campaign.product}`;
+  try {
+    const text = await callClaudeWebSearch(system, user, 2500);
+    const data = extractJsonObject(text);
+    if (!data) {
+      if (!quiet) addLog(`官网深挖未拿到可解析结果：${prospect.company}`);
+      return "none";
+    }
+    applyContact(prospectId, data, "claude-web");
+    if (!quiet) addLog(`官网深挖联系人（联网核实）：${prospect.company}`);
+    saveState();
+    render();
+    return "claude-web";
+  } catch (error) {
+    if (!quiet) addLog(`官网深挖失败：${error.message}`);
+    return "none";
+  }
+}
+
+// 一键批量补全：对所有缺联系方式/新线索依次跑「AI 找联系人」链路（真实源→Claude→本地）
+async function bulkEnrichContacts() {
+  const targets = state.prospects.filter(
+    (p) =>
+      !p.email ||
+      ["待查找", "待补全", "待确认"].includes(p.contactName) ||
+      ["新发现", "待审核"].includes(p.status)
+  );
+  if (!targets.length) {
+    addLog("没有需要补全联系方式的线索（都已补全或缺产品/线索）");
+    saveState();
+    render();
+    return 0;
+  }
+  addLog(`开始批量补全 ${targets.length} 家线索的联系方式…（真实源/AI/规则按已配置引擎）`);
+  renderLogs();
+  let done = 0;
+  for (const t of targets) {
+    // eslint-disable-next-line no-await-in-loop
+    await enrichContactAI(t.id, true);
+    done += 1;
+    if (done % 3 === 0 || done === targets.length) {
+      addLog(`批量补全进度 ${done}/${targets.length}…`);
+      renderLogs();
+    }
+  }
+  addLog(`批量补全完成：处理 ${done} 家线索`);
+  saveState();
+  render();
+  return done;
 }
 
 async function generateSequenceAI() {
@@ -4372,7 +4503,7 @@ async function parseAgentTask() {
     approvalMode: "review",
     status: "draft",
     funnel: { raw: 0, matched: 0, verified: 0, deduped: 0, scored: 0 },
-    recurring: { enabled: false, interval: "weekly", perCycle: 20, lastRunAt: null, cyclesRun: 0 },
+    recurring: { enabled: false, interval: "weekly", perCycle: 20, useWebSearch: false, lastRunAt: null, cyclesRun: 0 },
     startedAt: timestamp()
   };
   state.agent.approvals = [];
@@ -4487,7 +4618,7 @@ async function agentApprove(approval, quiet = false) {
 function agentRecurring() {
   const task = state.agent.task;
   if (!task) return null;
-  if (!task.recurring) task.recurring = { enabled: false, interval: "weekly", perCycle: 20, lastRunAt: null, cyclesRun: 0 };
+  if (!task.recurring) task.recurring = { enabled: false, interval: "weekly", perCycle: 20, useWebSearch: false, lastRunAt: null, cyclesRun: 0 };
   return task.recurring;
 }
 
@@ -4511,6 +4642,21 @@ async function agentRunCycle(manual = false) {
   // Webhook 模式：走真实采集补充；否则用演示生成器模拟"每周补量"
   if (state.settings.mode === "webhook" && webhookUrl("search")) {
     batch = await trySearchWebhook();
+  }
+  // 每日自动联网找真实客户：开启且配置了 Claude 时，优先用联网搜索补量
+  if (!batch?.length && rec.useWebSearch && aiEnabled()) {
+    const n = await webSearchProspects({ count: perCycle });
+    if (n > 0) {
+      rec.lastRunAt = new Date().toISOString();
+      rec.cyclesRun = (rec.cyclesRun || 0) + 1;
+      addLog(
+        `周期补量（第 ${rec.cyclesRun} 轮 · ${rec.interval === "daily" ? "每日" : rec.interval === "monthly" ? "每月" : "每周"} · 联网找真实客户）：新增 ${n} 家线索走漏斗`
+      );
+      saveState();
+      render();
+      return n;
+    }
+    // 联网没找到就继续用生成器兜底
   }
   if (!batch?.length) {
     const salt = `R${(rec.cyclesRun || 0) + 1}`;
@@ -4801,6 +4947,7 @@ function renderAgentTaskCard() {
         <label class="toggle-row"><input id="agentRecurEnabled" type="checkbox" ${rec.enabled ? "checked" : ""} /><span>周期自动补量</span></label>
         <label class="inline-field"><span>频率</span><select id="agentRecurInterval">${intervalOptions}</select></label>
         <label class="inline-field"><span>每轮线索数</span><input id="agentRecurPer" type="number" min="1" max="200" value="${rec.perCycle}" /></label>
+        <label class="toggle-row" title="开启后每到周期用 Claude 联网找真实客户（需配置 AI 引擎），否则用演示生成器/采集 Webhook"><input id="agentRecurWebSearch" type="checkbox" ${rec.useWebSearch ? "checked" : ""} /><span>联网找真实客户</span></label>
         <button class="ghost-button" id="agentRunCycleNow" type="button"><svg><use href="#icon-play" /></svg><span>立即补充一批</span></button>
         <span class="webhook-status ${rec.enabled ? "ok" : ""}">${cycleStatus}</span>
       </div>
@@ -5748,27 +5895,44 @@ elements.runDiscovery.addEventListener("click", () => {
   render();
 });
 
+// 异步按钮包装：防重复点击 + 临时文案 + 统一异常兜底
+async function runAsyncButton(btn, busyText, task) {
+  if (!btn || btn.dataset.busy === "1") return;
+  btn.dataset.busy = "1";
+  const span = btn.querySelector("span");
+  const original = span?.textContent;
+  if (span) span.textContent = busyText;
+  btn.disabled = true;
+  try {
+    await task();
+  } catch (error) {
+    addLog(`操作失败：${error.message}`);
+    saveState();
+    render();
+  } finally {
+    btn.dataset.busy = "0";
+    btn.disabled = false;
+    if (span && original) span.textContent = original;
+  }
+}
+
 if (elements.webSearchFind) {
-  elements.webSearchFind.addEventListener("click", async () => {
+  elements.webSearchFind.addEventListener("click", () => {
     readCampaignFromForm();
-    const btn = elements.webSearchFind;
-    if (btn.dataset.busy === "1") return;
-    btn.dataset.busy = "1";
-    const original = btn.querySelector("span")?.textContent;
-    if (btn.querySelector("span")) btn.querySelector("span").textContent = "联网搜索中…";
-    btn.disabled = true;
-    try {
-      const count = await webSearchProspects({ count: 10 });
-      if (count > 0) addLog(`Claude 联网找到 ${count} 家新公司，已进线索池`);
-    } catch (error) {
-      addLog(`联网找客户失败：${error.message}`);
-      saveState();
-      render();
-    } finally {
-      btn.dataset.busy = "0";
-      btn.disabled = false;
-      if (btn.querySelector("span") && original) btn.querySelector("span").textContent = original;
-    }
+    runAsyncButton(elements.webSearchFind, "联网搜索中…", () => webSearchProspects({ count: 10 }));
+  });
+}
+
+if (elements.reverseCompetitor) {
+  elements.reverseCompetitor.addEventListener("click", () => {
+    readCampaignFromForm();
+    runAsyncButton(elements.reverseCompetitor, "反查中…", () => reverseCompetitorChannel(elements.competitorUrl?.value || ""));
+  });
+}
+
+if (elements.bulkEnrichContacts) {
+  elements.bulkEnrichContacts.addEventListener("click", () => {
+    runAsyncButton(elements.bulkEnrichContacts, "批量补全中…", () => bulkEnrichContacts());
   });
 }
 
@@ -5881,6 +6045,15 @@ elements.prospectDetail.addEventListener("click", (event) => {
     addLog(`正在为 ${prospect.company} 找联系人…`);
     renderLogs();
     enrichContactAI(prospect.id);
+    return;
+  }
+
+  if (action === "deep-dig-contact") {
+    Promise.resolve(deepDigContact(prospect.id)).catch((error) => {
+      addLog(`官网深挖失败：${error.message}`);
+      saveState();
+      render();
+    });
     return;
   }
 
@@ -6163,6 +6336,12 @@ elements.agentTaskCard.addEventListener("change", (event) => {
   } else if (event.target.id === "agentRecurPer") {
     rec.perCycle = clamp(Number(event.target.value) || 20, 1, 200);
     saveState();
+  } else if (event.target.id === "agentRecurWebSearch") {
+    rec.useWebSearch = event.target.checked;
+    if (rec.useWebSearch && !aiEnabled()) addLog("已勾选联网找客户，但尚未配置 Claude API（设置 → AI 引擎），周期到点会先降级到生成器/采集 Webhook");
+    else addLog(rec.useWebSearch ? "周期补量将用 Claude 联网找真实客户" : "周期补量改用生成器/采集 Webhook");
+    saveState();
+    render();
   }
 });
 

@@ -1,4 +1,4 @@
-window.__APP_V = "8";
+window.__APP_V = "9";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -123,7 +123,15 @@ const elements = {
   paletteResults: $("#paletteResults"),
   crmDrawerOverlay: $("#crmDrawerOverlay"),
   crmDrawer: $("#crmDrawer"),
-  analyticsRange: $("#analyticsRange")
+  analyticsRange: $("#analyticsRange"),
+  aiEngineStatus: $("#aiEngineStatus"),
+  aiLocalMode: $("#aiLocalMode"),
+  aiClaudeMode: $("#aiClaudeMode"),
+  aiApiKeyInput: $("#aiApiKeyInput"),
+  aiModelSelect: $("#aiModelSelect"),
+  testAiEngine: $("#testAiEngine"),
+  aiEngineTestStatus: $("#aiEngineTestStatus"),
+  aiWriteEmail: $("#aiWriteEmail")
 };
 
 const WEBHOOK_CONNECTORS = {
@@ -284,7 +292,10 @@ function createDemoState() {
       searchProvider: "Google Custom Search / SerpAPI",
       emailProvider: "Hunter / Apollo / Dropcontact",
       crmProvider: "Twenty / Wukong CRM",
-      webhookStatus: {}
+      webhookStatus: {},
+      aiEngine: "local",
+      aiApiKey: "",
+      aiModel: "claude-opus-4-8"
     },
     searchPlan,
     prospects,
@@ -392,6 +403,8 @@ function bindSettingsForm() {
   elements.searchProvider.value = settings.searchProvider;
   elements.emailProvider.value = settings.emailProvider;
   elements.crmProvider.value = settings.crmProvider;
+  elements.aiApiKeyInput.value = settings.aiApiKey || "";
+  elements.aiModelSelect.value = settings.aiModel || "claude-opus-4-8";
   updateModeButtons();
 }
 
@@ -444,7 +457,9 @@ function readSettingsFromForm() {
     crmWebhook: elements.crmWebhook.value.trim(),
     searchProvider: elements.searchProvider.value,
     emailProvider: elements.emailProvider.value,
-    crmProvider: elements.crmProvider.value
+    crmProvider: elements.crmProvider.value,
+    aiApiKey: elements.aiApiKeyInput.value.trim(),
+    aiModel: elements.aiModelSelect.value
   };
 }
 
@@ -472,6 +487,7 @@ function render() {
   renderWebhookPanel();
   updateModeButtons();
   updateAutopilotButton();
+  updateAiEngineButtons();
   renderNavBadges();
   renderChecklist();
 }
@@ -1191,17 +1207,32 @@ function renderTimeline(conversation) {
   if (intent) {
     const inboundEvents = conversation.events.filter((e) => e.kind === "inbound");
     const replyChannel = inboundEvents[inboundEvents.length - 1]?.channel || "email";
-    const suggestion = suggestReply(prospect, intent.key);
+    const stored = getStoredAI(conversation.prospectId);
+    const intentLabel = stored ? stored.intent_label : intent.label;
+    const confidence = stored ? stored.confidence : intent.confidence;
+    const summary = stored
+      ? `${stored.summary} 建议：${stored.next_action}`
+      : summarizeConversation(conversation);
+    const suggestion = stored?.suggested_reply || suggestReply(prospect, intent.key);
+    const sourceTag = stored
+      ? `<span class="channel-badge whatsapp">Claude · ${escapeHtml(stored.model || "")}</span>`
+      : `<span class="tag">本地规则</span>`;
+    const analyzeBtn =
+      !stored && aiEnabled()
+        ? `<button class="ghost-button" data-inbox-action="ai-analyze" type="button"><svg><use href="#icon-zap" /></svg><span>用 Claude 分析</span></button>`
+        : "";
     aiPanel = `
       <div class="ai-panel">
         <div class="ai-panel-head">
           <span class="ai-badge">AI 助手</span>
-          <span class="intent-tag ${intent.tone}">意图：${intent.label} · 置信度 ${intent.confidence}%</span>
+          <span class="intent-tag ${intent.tone}">意图：${escapeHtml(intentLabel)} · 置信度 ${confidence}%</span>
+          ${sourceTag}
         </div>
-        <p class="ai-summary">${escapeHtml(summarizeConversation(conversation))}</p>
+        <p class="ai-summary">${escapeHtml(summary)}</p>
         <p class="eyebrow">建议回复（${replyChannel === "whatsapp" ? "WhatsApp" : "邮件"}）</p>
         <div class="ai-suggestion" id="aiSuggestion">${escapeHtml(suggestion)}</div>
         <div class="ai-actions">
+          ${analyzeBtn}
           <button class="ghost-button" data-inbox-action="copy-suggestion" type="button"><svg><use href="#icon-copy" /></svg><span>复制建议</span></button>
           <button class="primary-button" data-inbox-action="adopt-suggestion" type="button"><svg><use href="#icon-mail" /></svg><span>采用为回复</span></button>
         </div>
@@ -1408,6 +1439,9 @@ function simulateInboundReply(prospectId) {
 
   // 规则3：自动驾驶开启时，立即生成 AI 回复草稿送审批
   if (state.autopilot?.enabled) createAiDraft(prospectId);
+
+  // 规则4：已配置 Claude API 时，异步做语义级意图分析与回复起草（结果回填后自动刷新界面）
+  enrichInboundWithAI(prospectId);
 }
 
 function cancelSequenceOnReply(prospectId) {
@@ -1498,7 +1532,14 @@ function getSuggestionForConversation(prospectId) {
   const prospect = state.prospects.find((p) => p.id === prospectId);
   const inbound = conversation.events.filter((e) => e.kind === "inbound");
   const channel = inbound[inbound.length - 1]?.channel || "email";
-  return { conversation, intent, prospect, channel, text: suggestReply(prospect, intent.key) };
+  const stored = getStoredAI(prospectId);
+  return {
+    conversation,
+    intent,
+    prospect,
+    channel,
+    text: stored?.suggested_reply || suggestReply(prospect, intent.key)
+  };
 }
 
 function hasPendingAiReply(prospectId) {
@@ -3476,6 +3517,204 @@ async function sendQuickReply(prospectId, channel, text) {
   render();
 }
 
+/* ---------- AI 引擎：Claude API 真实智能（未配置时自动降级本地规则） ---------- */
+
+function aiEnabled() {
+  return state.settings.aiEngine === "claude" && !!(state.settings.aiApiKey || "").trim();
+}
+
+async function callClaude(systemPrompt, userText, schema, maxTokens = 2048) {
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": (state.settings.aiApiKey || "").trim(),
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true"
+    },
+    body: JSON.stringify({
+      model: state.settings.aiModel || "claude-opus-4-8",
+      max_tokens: maxTokens,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userText }],
+      ...(schema ? { output_config: { format: { type: "json_schema", schema } } } : {})
+    })
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => null);
+    throw new Error(err?.error?.message || `HTTP ${response.status}`);
+  }
+  const data = await response.json();
+  if (data.stop_reason === "refusal") throw new Error("请求被安全策略拒绝");
+  const text = data.content?.find((block) => block.type === "text")?.text || "";
+  return schema ? JSON.parse(text) : text;
+}
+
+const AI_ANALYSIS_SCHEMA = {
+  type: "object",
+  properties: {
+    intent: {
+      type: "string",
+      enum: ["price", "sample", "discount", "leadtime", "moq", "cert", "reject", "other"]
+    },
+    intent_label: { type: "string", description: "意图的中文短标签，如 询价、要样品、砍价" },
+    confidence: { type: "integer", description: "0-100 的置信度" },
+    summary: { type: "string", description: "一句中文摘要：客户处境 + 最新诉求" },
+    next_action: { type: "string", description: "给业务员的中文下一步建议，一句话" },
+    suggested_reply: { type: "string", description: "可直接发送的英文回复全文，含称呼与署名" }
+  },
+  required: ["intent", "intent_label", "confidence", "summary", "next_action", "suggested_reply"],
+  additionalProperties: false
+};
+
+const AI_SEQUENCE_SCHEMA = {
+  type: "object",
+  properties: {
+    emails: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          label: { type: "string", description: "中文步骤名，如 首封开发信" },
+          dayOffset: { type: "integer" },
+          subject: { type: "string" },
+          body: { type: "string" }
+        },
+        required: ["label", "dayOffset", "subject", "body"],
+        additionalProperties: false
+      }
+    }
+  },
+  required: ["emails"],
+  additionalProperties: false
+};
+
+function getStoredAI(prospectId) {
+  return [...state.inbound].reverse().find((m) => m.prospectId === prospectId && m.ai)?.ai || null;
+}
+
+async function analyzeConversationAI(prospectId) {
+  const conversation = buildConversations().find((c) => c.prospectId === prospectId);
+  const prospect = state.prospects.find((p) => p.id === prospectId);
+  if (!conversation || !prospect) return null;
+
+  const transcript = conversation.events
+    .filter((e) => e.status !== "已取消")
+    .slice(-12)
+    .map((e) =>
+      e.kind === "inbound"
+        ? `客户: ${e.body}`
+        : `我方(${e.channel === "whatsapp" ? "WhatsApp" : "邮件"}·${e.title || ""}): ${e.subject ? `${e.subject} — ` : ""}${e.body || ""}`
+    )
+    .join("\n---\n");
+
+  const system =
+    "你是资深外贸业务助手。根据对话判断客户最新意图并起草回复。suggested_reply 必须是英文、专业、简洁、可直接发送；其余字段用中文。";
+  const user = `我方产品: ${state.campaign.product}
+卖点: ${state.campaign.valueProps}
+认证: ${state.campaign.certifications}
+署名: ${state.campaign.senderName}, ${state.campaign.companyName}
+客户: ${prospect.company}（${prospect.market}，联系人 ${prospect.contactName}）
+
+对话记录（旧→新）:
+${transcript}`;
+
+  return callClaude(system, user, AI_ANALYSIS_SCHEMA, 1500);
+}
+
+async function enrichInboundWithAI(prospectId, force = false) {
+  if (!aiEnabled()) return;
+  const message = [...state.inbound].reverse().find((m) => m.prospectId === prospectId && (force || !m.ai));
+  if (!message) return;
+  try {
+    const result = await analyzeConversationAI(prospectId);
+    if (!result) return;
+    message.ai = { ...result, model: state.settings.aiModel, at: Date.now() };
+    addLog(`Claude 分析完成（${result.intent_label} · 置信度 ${result.confidence}%）：${message.company}`);
+    saveState();
+    render();
+  } catch (error) {
+    addLog(`Claude 分析失败，已用本地规则兜底：${error.message}`);
+  }
+}
+
+async function generateSequenceAI() {
+  const prospect = getSelectedProspect();
+  if (!prospect) {
+    addLog("请先选择潜客");
+    return;
+  }
+  if (!aiEnabled()) {
+    addLog("未启用 Claude API：请在「设置 → AI 引擎」切换并填入 Anthropic API Key");
+    navigateTo("settings");
+    return;
+  }
+  addLog(`Claude 正在为 ${prospect.company} 深度写信…`);
+  try {
+    const system =
+      "你是顶尖外贸开发信专家。为指定客户写一套 4 封英文开发信序列（D0 首触 / D3 跟进 / D7 案例或样品 / D14 收尾）。每封 90-140 词，围绕该客户的业务与市场个性化切入，避免模板腔与夸张营销语。label 用中文。";
+    const user = `产品: ${state.campaign.product}
+卖点: ${state.campaign.valueProps}
+认证: ${state.campaign.certifications}
+署名: ${state.campaign.senderName}, ${state.campaign.companyName}
+客户: ${prospect.company}
+市场: ${prospect.market}
+联系人: ${prospect.contactName}（${prospect.role}）
+网站: ${prospect.website}
+采购信号: ${prospect.buyingSignal}`;
+    const result = await callClaude(system, user, AI_SEQUENCE_SCHEMA, 3000);
+    state.sequence = (result.emails || []).slice(0, 6).map((email) => ({
+      id: makeId("email"),
+      label: email.label,
+      dayOffset: email.dayOffset,
+      subject: email.subject,
+      body: email.body,
+      ai: true
+    }));
+    addLog(`Claude 已生成 ${state.sequence.length} 封深度个性化开发信：${prospect.company}`);
+    saveState();
+    render();
+  } catch (error) {
+    addLog(`Claude 写信失败：${error.message}`);
+  }
+}
+
+async function testAiEngineConnection() {
+  readSettingsFromForm();
+  const statusEl = elements.aiEngineTestStatus;
+  if (!(state.settings.aiApiKey || "").trim()) {
+    statusEl.className = "webhook-status fail";
+    statusEl.textContent = "未填写 API Key";
+    return;
+  }
+  statusEl.className = "webhook-status pending";
+  statusEl.textContent = "测试中…";
+  const start = Date.now();
+  try {
+    await callClaude("只回复两个字：正常", "连通性测试", null, 16);
+    statusEl.className = "webhook-status ok";
+    statusEl.textContent = `正常 · ${state.settings.aiModel} · ${Date.now() - start}ms`;
+    addLog(`Claude API 连接成功（${state.settings.aiModel}）`);
+  } catch (error) {
+    statusEl.className = "webhook-status fail";
+    statusEl.textContent = `失败 · ${error.message.slice(0, 40)}`;
+    addLog(`Claude API 连接失败：${error.message}`);
+  }
+  saveState();
+  updateAiEngineButtons();
+}
+
+function updateAiEngineButtons() {
+  const engine = state.settings.aiEngine || "local";
+  elements.aiLocalMode.classList.toggle("is-active", engine === "local");
+  elements.aiClaudeMode.classList.toggle("is-active", engine === "claude");
+  elements.aiEngineStatus.textContent = aiEnabled()
+    ? `Claude · ${state.settings.aiModel}`
+    : engine === "claude"
+      ? "Claude（未配置 Key）"
+      : "本地规则";
+}
+
 function normalizeRemoteProspects(items) {
   return items.map((item, index) => ({
     id: item.id || makeId("prospect"),
@@ -4478,6 +4717,26 @@ elements.sendDueBtn.addEventListener("click", async () => {
 elements.themeToggle.addEventListener("click", toggleTheme);
 elements.openPaletteBtn.addEventListener("click", openPalette);
 
+elements.aiWriteEmail.addEventListener("click", generateSequenceAI);
+elements.testAiEngine.addEventListener("click", testAiEngineConnection);
+
+[elements.aiLocalMode, elements.aiClaudeMode].forEach((button) => {
+  button.addEventListener("click", () => {
+    readSettingsFromForm();
+    state.settings.aiEngine = button.dataset.aiEngine;
+    saveState();
+    updateAiEngineButtons();
+    addLog(
+      state.settings.aiEngine === "claude"
+        ? aiEnabled()
+          ? "AI 引擎已切换为 Claude API"
+          : "AI 引擎已切换为 Claude API（请填入 API Key 并点「测试连接」）"
+        : "AI 引擎已切换为本地规则"
+    );
+    renderLogs();
+  });
+});
+
 document.addEventListener("keydown", (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
     event.preventDefault();
@@ -4649,6 +4908,13 @@ elements.inboxTimeline.addEventListener("click", async (event) => {
     const channel =
       document.querySelector(".quick-reply [data-reply-channel].is-active")?.dataset.replyChannel || "email";
     sendQuickReply(prospectId, channel, textEl?.value || "");
+    return;
+  }
+
+  if (action === "ai-analyze") {
+    addLog("Claude 分析中…");
+    renderLogs();
+    enrichInboundWithAI(prospectId, true);
     return;
   }
 

@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>自动化外贸开发系统</title>
-    <link rel="stylesheet" href="./styles.css?v=8" />
+    <link rel="stylesheet" href="./styles.css?v=9" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
@@ -395,6 +395,10 @@
             </div>
             <div class="topbar-actions">
               <select id="emailProspectSelect" aria-label="选择潜客"></select>
+              <button class="ghost-button" id="aiWriteEmail" type="button" title="用 Claude 按客户画像深度个性化生成整套序列（需在设置中配置 AI 引擎）">
+                <svg><use href="#icon-zap" /></svg>
+                <span>Claude 深度写信</span>
+              </button>
               <button class="ghost-button" id="regenerateEmail" type="button">
                 <svg><use href="#icon-mail" /></svg>
                 <span>重写序列</span>
@@ -897,6 +901,39 @@
                 </select>
               </label>
             </section>
+
+            <section class="panel connector-panel ai-engine-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">AI engine</p>
+                  <h2>AI 引擎</h2>
+                </div>
+                <span class="status-pill" id="aiEngineStatus">本地规则</span>
+              </div>
+              <div class="segmented" role="group" aria-label="AI 引擎">
+                <button class="segment is-active" id="aiLocalMode" data-ai-engine="local" type="button">本地规则</button>
+                <button class="segment" id="aiClaudeMode" data-ai-engine="claude" type="button">Claude API</button>
+              </div>
+              <label>
+                <span>Anthropic API Key（仅存本机浏览器）</span>
+                <input id="aiApiKeyInput" type="password" placeholder="sk-ant-..." autocomplete="off" />
+              </label>
+              <label>
+                <span>模型</span>
+                <select id="aiModelSelect">
+                  <option value="claude-opus-4-8">Claude Opus 4.8（推荐·最强）</option>
+                  <option value="claude-sonnet-5">Claude Sonnet 5（均衡）</option>
+                  <option value="claude-haiku-4-5">Claude Haiku 4.5（快·省）</option>
+                </select>
+              </label>
+              <div class="connector-foot">
+                <button class="ghost-button" id="testAiEngine" type="button">测试连接</button>
+                <span class="webhook-status" id="aiEngineTestStatus">未测试</span>
+              </div>
+              <p class="connector-hint">
+                切换到 Claude API 后：意图识别、回复建议、对话摘要、深度个性化写信由真实大模型完成；未配置或调用失败时自动降级为本地规则。
+              </p>
+            </section>
           </div>
 
           <section class="panel">
@@ -935,11 +972,11 @@
 
     <div class="toast-stack" id="toastStack" aria-live="polite"></div>
 
-    <script src="./app.js?v=8" defer></script>
+    <script src="./app.js?v=9" defer></script>
     <script>
       // 缓存哨兵：若浏览器仍加载旧版 app.js（版本不匹配或加载失败导致按钮失灵），给出明确提示
       window.addEventListener("load", () => {
-        if (window.__APP_V !== "8") {
+        if (window.__APP_V !== "9") {
           const tip = document.createElement("div");
           tip.style.cssText =
             "position:fixed;top:0;left:0;right:0;z-index:9999;padding:12px 16px;background:#c2410c;color:#fff;font-size:14px;text-align:center;font-weight:700;";

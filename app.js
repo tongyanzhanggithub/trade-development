@@ -1,4 +1,4 @@
-window.__APP_V = "22";
+window.__APP_V = "24";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -18,6 +18,7 @@ const elements = {
   companyInput: $("#companyInput"),
   campaignStatus: $("#campaignStatus"),
   generatePlan: $("#generatePlan"),
+  oneClickPipeline: $("#oneClickPipeline"),
   resetDemo: $("#resetDemo"),
   runAutomationTop: $("#runAutomationTop"),
   exportJson: $("#exportJson"),
@@ -5285,6 +5286,68 @@ function queueTopProspects() {
   if (candidates.length) addLog(`${candidates.length} 个高分潜客加入发信队列`);
 }
 
+// 一键起量：联网找客户 → 批量补全 → 质量分入队 → 生成待发邮件，停在批量审批
+async function runOneClickPipeline() {
+  readCampaignFromForm();
+  const useAI = aiEnabled();
+
+  // ① 找客户
+  addLog("一键起量 ①/④：正在找客户…");
+  renderLogs();
+  let found = 0;
+  if (useAI) {
+    found = await webSearchProspects({ count: 15 });
+  } else {
+    // 未配置 Claude：用演示生成器铺一批，让新手先跑通全流程（演示数据）
+    const generated = generateProspects(state.campaign, 15, `Kick${state.prospects.length}`);
+    const seen = new Set(state.prospects.map((p) => p.website || p.company.toLowerCase()));
+    const fresh = generated.filter((g) => {
+      const key = g.website || g.company.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    state.prospects = [...fresh, ...state.prospects];
+    agentOnProspectsImported(fresh);
+    found = fresh.length;
+    addLog(`一键起量：未配置 Claude，已用演示数据铺 ${found} 家线索跑通流程（配置 AI 引擎后可联网找真实客户）`);
+  }
+  if (!found && !state.prospects.length) {
+    addLog("一键起量：没有可用线索。请在「设置 → AI 引擎」配置 Claude，或先在搜索页粘贴导入真实结果");
+    saveState();
+    render();
+    return;
+  }
+
+  // ② 批量补全联系方式 + 验证邮箱
+  addLog("一键起量 ②/④：批量补全联系方式…");
+  renderLogs();
+  await bulkEnrichContacts();
+  state.prospects = verifyProspectList(state.prospects, state.campaign);
+
+  // ③ 生成待发：给有联系方式、未退订、未入队的线索按质量分排序排首触（冷启动取质量最高的一批）
+  addLog("一键起量 ③/④：按质量分排序生成待发邮件…");
+  renderLogs();
+  const cap = Math.min(state.campaign.dailyLimit || 20, 25);
+  const candidates = state.prospects
+    .filter((p) => !p.optOut && !["已入队", "已回复"].includes(p.status) && emailLooksValid(p.email))
+    .sort((a, b) => computeLeadScore(b).probability - computeLeadScore(a).probability)
+    .slice(0, cap);
+  candidates.forEach((p) => queueProspect(p, false));
+  const queued = candidates.length;
+
+  // ④ 停在批量审批
+  if (queued > 0) {
+    navigateTo("automation");
+    addLog(`一键起量 ④/④：已生成 ${queued} 封待发邮件，请在此逐封预检后「批量审批发送」（发送始终等你过目）`);
+  } else {
+    navigateTo("prospects");
+    addLog("一键起量 ④/④：线索已入池，但都还缺可用邮箱；请先『批量补全联系方式』或接入邮箱查找 Webhook 后再入队");
+  }
+  saveState();
+  render();
+}
+
 // 质量分 A/B 级、可入队（未退订/未入队/未回复/不在冷却）的优质客户
 function isQualityQueueable(p) {
   if (p.optOut) return false;
@@ -6012,6 +6075,12 @@ elements.campaignForm.addEventListener("submit", (event) => {
   saveState();
   render();
 });
+
+if (elements.oneClickPipeline) {
+  elements.oneClickPipeline.addEventListener("click", () => {
+    runAsyncButton(elements.oneClickPipeline, "起量中…", () => runOneClickPipeline());
+  });
+}
 
 elements.resetDemo.addEventListener("click", () => {
   state = createDemoState();

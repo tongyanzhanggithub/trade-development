@@ -1,4 +1,4 @@
-window.__APP_V = "10";
+window.__APP_V = "11";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -144,7 +144,12 @@ const elements = {
   agentApproveAll: $("#agentApproveAll"),
   agentHandoff: $("#agentHandoff"),
   agentDemoData: $("#agentDemoData"),
-  agentReset: $("#agentReset")
+  agentReset: $("#agentReset"),
+  agentDevelopPanel: $("#agentDevelopPanel"),
+  agentAutoRespond: $("#agentAutoRespond"),
+  agentKnowledgeBase: $("#agentKnowledgeBase"),
+  agentSaveKb: $("#agentSaveKb"),
+  agentAutoLog: $("#agentAutoLog")
 };
 
 const WEBHOOK_CONNECTORS = {
@@ -263,7 +268,8 @@ function loadState() {
       ui: { ...fallback.ui, ...(parsed.ui || {}) },
       agent: {
         task: parsed.agent?.task || null,
-        approvals: Array.isArray(parsed.agent?.approvals) ? parsed.agent.approvals : []
+        approvals: Array.isArray(parsed.agent?.approvals) ? parsed.agent.approvals : [],
+        autoRespond: !!parsed.agent?.autoRespond
       },
       logs: Array.isArray(parsed.logs) ? parsed.logs : fallback.logs,
       management: parsed.management
@@ -284,7 +290,8 @@ function createDemoState() {
     certifications: "BSCI, LFGB, FDA",
     senderName: "Your Name",
     companyName: "Your Company",
-    dailyLimit: 30
+    dailyLimit: 30,
+    knowledgeBase: ""
   };
   const searchPlan = generateSearchPlan(campaign);
   let prospects = [];
@@ -333,7 +340,7 @@ function createDemoState() {
     },
     autopilot: { enabled: false, intervalSec: 8 },
     ui: { checklistDismissed: false, theme: "light", analyticsRange: "all" },
-    agent: { task: null, approvals: [] },
+    agent: { task: null, approvals: [], autoRespond: false },
     management: createManagementState(campaign),
     logs: [{ id: makeId("log"), time: timestamp(), message: "示例自动化活动已生成" }]
   };
@@ -454,6 +461,7 @@ function readInboxRulesFromForm() {
 
 function readCampaignFromForm() {
   state.campaign = {
+    ...state.campaign,
     product: elements.productInput.value.trim() || "your product",
     markets: elements.marketsInput.value.trim() || "United States",
     customerType: elements.customerTypeInput.value,
@@ -1456,11 +1464,24 @@ function simulateInboundReply(prospectId) {
     addLog(`AI 意图「拒绝」→ ${conversation.company} 转入培育名单，停止主动触达`);
   }
 
-  // 规则3：自动驾驶开启时，立即生成 AI 回复草稿送审批
-  if (state.autopilot?.enabled) createAiDraft(prospectId);
+  // 规则3/4/5：先做语义分析，再决定初轮应答与草稿（顺序保证 opt-out/敏感优先于自动发送）
+  processInboundIntelligence(prospectId);
+}
 
-  // 规则4：已配置 Claude API 时，异步做语义级意图分析与回复起草（结果回填后自动刷新界面）
-  enrichInboundWithAI(prospectId);
+async function processInboundIntelligence(prospectId) {
+  // 已配置 Claude 时先做语义级意图分析（回填后 auto-respond 用真实意图判断）
+  if (aiEnabled()) await enrichInboundWithAI(prospectId);
+
+  // 第 4 步护栏：开启初轮自动应答时，opt-out/敏感话题优先处理
+  if (state.agent?.autoRespond) {
+    await handleInboundAutoRespond(prospectId);
+    const message = [...state.inbound].reverse().find((m) => m.prospectId === prospectId);
+    // 已被护栏处理（自动答复/转人工/opt-out）则不再走审批草稿
+    if (message?.autoAction) return;
+  }
+
+  // 未自动应答时，自动驾驶下生成 AI 回复草稿送审批
+  if (state.autopilot?.enabled) createAiDraft(prospectId);
 }
 
 function cancelSequenceOnReply(prospectId) {
@@ -3146,6 +3167,9 @@ async function autopilotTick() {
   //    注意：忽略「已取消」的触达事件（回复即停产生），否则被取消的未来邮件会掩盖客户回复
   let drafts = 0;
   buildConversations().forEach((conversation) => {
+    // 已被初轮应答护栏处理（自动答复/转人工/opt-out）的会话不再生成草稿
+    const lastInbound = [...state.inbound].reverse().find((m) => m.prospectId === conversation.prospectId);
+    if (lastInbound?.autoAction) return;
     const lastMeaningful = [...conversation.events]
       .reverse()
       .find((e) => e.kind === "inbound" || (e.kind === "outbound" && e.status !== "已取消"));
@@ -3946,12 +3970,20 @@ function agentHandoffData() {
   let silent = 0;
   buildConversations().forEach((c) => {
     if (c.replied) {
+      const lastInbound = [...state.inbound].reverse().find((m) => m.prospectId === c.prospectId);
+      const escalated = lastInbound?.autoAction?.type === "escalated";
+      const optout = lastInbound?.autoAction?.type === "optout";
       const stored = getStoredAI(c.prospectId);
       const local = getConversationIntent(c);
       const key = stored ? stored.intent : local?.key;
-      const label = stored ? stored.intent_label : local?.label || "已回复";
+      const label = escalated
+        ? `转人工 · ${lastInbound.autoAction.reason}`
+        : stored
+          ? stored.intent_label
+          : local?.label || "已回复";
       const summary = stored ? stored.summary : null;
-      if (AGENT_HOT_INTENTS.includes(key)) hot.push({ c, label, summary });
+      if (optout) rejected.push({ c, label: "opt-out 黑名单" });
+      else if (escalated || AGENT_HOT_INTENTS.includes(key)) hot.push({ c, label, summary });
       else if (key === "reject") rejected.push({ c, label });
       else warm.push({ c, label });
     } else if (c.events.some((e) => e.kind === "outbound" && e.status === "已发送")) {
@@ -3982,6 +4014,160 @@ function computeAgentInsight() {
     .filter((x) => x.replied >= 2 && x.rate >= avg * 1.5)
     .sort((a, b) => b.rate - a.rate)[0];
   return best ? `效果回流：「${best.m}」回复率 ${Math.round(best.rate * 100)}%（均值 ${Math.round(avg * 100)}%），建议下一批向该市场倾斜。` : "";
+}
+
+/* ---------- 第 4 步：AI 初轮应答护栏 ---------- */
+
+function isOptOut(text) {
+  return /unsubscribe|stop sending|stop emailing|remove me|opt.?out|take me off|do not contact|退订|别再发|不要再发|停止发送|取消订阅/i.test(
+    text || ""
+  );
+}
+
+// 敏感话题：AI 一律不擅自答复，立即转人工。返回中文原因或 null
+function sensitiveTopic(text) {
+  const t = (text || "").toLowerCase();
+  if (/payment term|net ?\d{2,3}|credit term|letter of credit|\bl\/c\b|账期|赊账|月结|信用证|付款方式|结算方式/.test(t))
+    return "账期 / 付款条件";
+  if (/exclusiv|sole (agent|distributor|agency)|distribution right|独家|总代理|代理权|区域保护/.test(t))
+    return "独家 / 代理权";
+  if (/discount|better price|lower price|target price|best price|price down|cheaper|砍价|折扣|优惠|降价|再便宜|最低价/.test(t))
+    return "价格 / 折扣谈判";
+  if (/contract|agreement|合同|协议|条款/.test(t)) return "合同条款";
+  return null;
+}
+
+// 可自动答复的标准问题意图
+const AGENT_STANDARD_INTENTS = ["price", "sample", "moq", "cert", "leadtime", "other"];
+
+function autoReplyTemplate(prospect, intentKey) {
+  const first = firstName(prospect);
+  const product = state.campaign.product;
+  const sender = state.campaign.senderName;
+  const bodies = {
+    price: `Hi ${first}, thanks for your interest in ${product}! Pricing depends on quantity and specifications, so I've flagged this to our sales colleague who will send you a detailed quotation shortly.`,
+    sample: `Hi ${first}, happy to help with ${product} samples. I'll have our team prepare the catalog and sample policy; a sales colleague will follow up with the specifics.`,
+    moq: `Hi ${first}, our MOQ for ${product} is flexible for a first order. Our sales colleague will confirm the exact tiers and pricing with you.`,
+    leadtime: `Hi ${first}, typical lead time for ${product} is 25-35 days after order confirmation, and samples in 5-7 days. Our sales colleague will confirm the exact timing for your quantity.`,
+    cert: `Hi ${first}, we can provide the relevant certificates and test reports for ${product}. Our sales colleague will attach the documents your market requires.`,
+    other: `Hi ${first}, thanks for your reply. I've shared your message with our sales colleague, who will follow up with the details.`
+  };
+  return `${bodies[intentKey] || bodies.other}\n\nBest regards,\n${sender} (AI assistant)`;
+}
+
+async function generateAutoReply(prospect, customerText, intentKey) {
+  if (aiEnabled()) {
+    try {
+      const system =
+        "你是外贸售前 AI 助手，只负责答复标准售前问题。严格护栏：绝对不承诺任何具体价格、折扣、账期/付款条件或独家代理——这些必须留给销售同事。回复中要明确告知客户详细报价/条款将由销售同事跟进。基于提供的产品知识库作答。回复为英文、简洁、专业，含称呼与 AI 助手署名。";
+      const user = `产品: ${state.campaign.product}
+卖点: ${state.campaign.valueProps}
+认证: ${state.campaign.certifications}
+产品知识库/FAQ: ${state.campaign.knowledgeBase || "（未提供，用通用话术）"}
+署名: ${state.campaign.senderName}
+
+客户来信: ${customerText}`;
+      const text = await callClaude(system, user, null, 700);
+      if (text) return text.trim();
+    } catch (error) {
+      addLog(`Claude 自动应答失败，改用模板：${error.message}`);
+    }
+  }
+  return autoReplyTemplate(prospect, intentKey);
+}
+
+function sendAutoReply(prospect, channel, text) {
+  const item =
+    channel === "whatsapp"
+      ? {
+          id: makeId("waq"),
+          prospectId: prospect.id,
+          company: prospect.company,
+          phone: prospect.phone,
+          label: "AI 初轮应答",
+          message: text,
+          dueDate: dateOffset(0),
+          createdAt: new Date().toISOString(),
+          status: "已发送",
+          sentAt: new Date().toISOString(),
+          delivered: true,
+          step: `自动应答-${state.whatsappQueue.length}`,
+          reply: true,
+          autoReply: true,
+          url: buildWhatsappUrl(prospect, text)
+        }
+      : {
+          id: makeId("outbox"),
+          prospectId: prospect.id,
+          company: prospect.company,
+          email: prospect.email,
+          label: "AI 初轮应答",
+          subject: `Re: ${state.campaign.product}`,
+          body: text,
+          dueDate: dateOffset(0),
+          createdAt: new Date().toISOString(),
+          status: "已发送",
+          sentAt: new Date().toISOString(),
+          delivered: true,
+          step: `自动应答-${state.outbox.length}`,
+          reply: true,
+          autoReply: true
+        };
+  if (channel === "whatsapp") state.whatsappQueue.push(item);
+  else state.outbox.push(item);
+}
+
+// 客户回复入站后的初轮处理：opt-out / 敏感转人工 / 标准自动答复
+async function handleInboundAutoRespond(prospectId) {
+  if (!state.agent?.autoRespond) return;
+  const prospect = state.prospects.find((p) => p.id === prospectId);
+  const message = [...state.inbound].reverse().find((m) => m.prospectId === prospectId);
+  if (!prospect || !message || message.autoAction) return;
+
+  const text = message.body;
+
+  // 护栏 1：opt-out 即时生效
+  if (isOptOut(text)) {
+    prospect.optOut = true;
+    const cancelled = cancelSequenceOnReply(prospectId);
+    message.autoAction = { type: "optout" };
+    addLog(`⛔ 客户 opt-out：${prospect.company} 已加入黑名单，停止全部触达（取消 ${cancelled} 条待发）`);
+    saveState();
+    render();
+    return;
+  }
+
+  // 护栏 2：敏感话题一律转人工
+  const sensitive = sensitiveTopic(text);
+  if (sensitive) {
+    message.autoAction = { type: "escalated", reason: sensitive };
+    addLog(`🙋 敏感话题「${sensitive}」：AI 不擅自答复，已转人工接管：${prospect.company}`);
+    saveState();
+    render();
+    return;
+  }
+
+  // 标准问题：自动答复（明确告知详细报价由销售跟进）
+  const stored = getStoredAI(prospectId);
+  const intentKey = stored ? stored.intent : classifyIntent(text).key;
+  if (!AGENT_STANDARD_INTENTS.includes(intentKey)) {
+    message.autoAction = { type: "escalated", reason: "需人工判断" };
+    addLog(`🙋 无法确定为标准问题，转人工：${prospect.company}`);
+    saveState();
+    render();
+    return;
+  }
+
+  const channel = message.channel || "email";
+  if (channel === "email" && !prospect.email) return;
+  if (channel === "whatsapp" && !prospect.phone) return;
+
+  const reply = await generateAutoReply(prospect, text, intentKey);
+  sendAutoReply(prospect, channel, reply);
+  message.autoAction = { type: "replied", intent: intentKey };
+  addLog(`🤖 AI 初轮自动应答（${channel === "whatsapp" ? "WhatsApp" : "邮件"}·${intentKey}）：${prospect.company}`);
+  saveState();
+  render();
 }
 
 function renderAgentTaskCard() {
@@ -4205,6 +4391,38 @@ function renderAgentHandoff() {
   `;
 }
 
+function renderAgentDevelop() {
+  elements.agentAutoRespond.checked = !!state.agent.autoRespond;
+  if (document.activeElement !== elements.agentKnowledgeBase) {
+    elements.agentKnowledgeBase.value = state.campaign.knowledgeBase || "";
+  }
+
+  const actions = state.inbound
+    .filter((m) => m.autoAction)
+    .slice(-8)
+    .reverse();
+  if (!actions.length) {
+    elements.agentAutoLog.innerHTML = state.agent.autoRespond
+      ? `<div class="empty-state">已开启。客户回复标准问题时自动应答，敏感话题转人工——动作会留痕在这里</div>`
+      : "";
+    return;
+  }
+  elements.agentAutoLog.innerHTML = `
+    <p class="eyebrow">初轮应答留痕</p>
+    ${actions
+      .map((m) => {
+        const meta =
+          m.autoAction.type === "replied"
+            ? `<span class="channel-badge whatsapp">已自动答复</span><span class="tag">${escapeHtml(m.autoAction.intent || "")}</span>`
+            : m.autoAction.type === "escalated"
+              ? `<span class="intent-tag red">转人工</span><span class="tag">${escapeHtml(m.autoAction.reason || "")}</span>`
+              : `<span class="intent-tag red">opt-out 黑名单</span>`;
+        return `<div class="auto-log-row"><strong>${escapeHtml(m.company)}</strong>${meta}<span class="tl-meta">${escapeHtml(m.time)}</span></div>`;
+      })
+      .join("")}
+  `;
+}
+
 function renderAgent() {
   if (!elements.agentTaskCard) return;
   elements.agentEngineTag.textContent = aiEnabled() ? `Claude 解析 · ${state.settings.aiModel}` : "本地规则解析";
@@ -4212,6 +4430,7 @@ function renderAgent() {
   renderAgentSteps();
   renderAgentFunnel();
   renderAgentApprovals();
+  renderAgentDevelop();
   renderAgentHandoff();
 }
 
@@ -4280,6 +4499,7 @@ function queueTopWhatsappProspects() {
 }
 
 function queueProspect(prospect, includeFullSequence = true) {
+  if (prospect.optOut) return;
   if (!prospect.email) {
     prospect = verifyProspectList(enrichProspectList([prospect], state.campaign), state.campaign)[0];
     state.prospects = state.prospects.map((item) => (item.id === prospect.id ? prospect : item));
@@ -4311,6 +4531,7 @@ function queueProspect(prospect, includeFullSequence = true) {
 }
 
 function queueWhatsappProspect(prospect, includeFullSequence = true) {
+  if (prospect.optOut) return;
   if (!prospect.phone) {
     prospect = verifyProspectList(enrichProspectList([prospect], state.campaign), state.campaign)[0];
     state.prospects = state.prospects.map((item) => (item.id === prospect.id ? prospect : item));
@@ -5310,6 +5531,24 @@ elements.agentReset.addEventListener("click", () => {
   addLog("Agent 任务已结束（已导入的线索与会话全部保留）");
   saveState();
   render();
+});
+
+elements.agentAutoRespond.addEventListener("change", () => {
+  state.agent.autoRespond = elements.agentAutoRespond.checked;
+  addLog(
+    state.agent.autoRespond
+      ? "AI 初轮自动应答已开启（敏感话题仍转人工，opt-out 即时生效）"
+      : "AI 初轮自动应答已关闭"
+  );
+  saveState();
+  render();
+});
+
+elements.agentSaveKb.addEventListener("click", () => {
+  state.campaign.knowledgeBase = elements.agentKnowledgeBase.value.trim();
+  addLog("产品知识库已保存，将用于 AI 初轮应答与深度写信");
+  saveState();
+  renderLogs();
 });
 
 [elements.aiLocalMode, elements.aiClaudeMode].forEach((button) => {

@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>自动化外贸开发系统</title>
-    <link rel="stylesheet" href="./styles.css?v=10" />
+    <link rel="stylesheet" href="./styles.css?v=11" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
@@ -370,6 +370,30 @@
               </button>
             </div>
             <div class="agent-approval-list" id="agentApprovalList"></div>
+          </section>
+
+          <section class="panel" id="agentDevelopPanel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Step 4 · 自动开发</p>
+                <h2>AI 初轮应答（带护栏）</h2>
+              </div>
+              <label class="toggle-row">
+                <input id="agentAutoRespond" type="checkbox" />
+                <span>开启初轮自动应答</span>
+              </label>
+            </div>
+            <p class="connector-hint">
+              开启后：客户回复「你们做什么/发个目录/价格多少」等标准问题时 AI 自动答复（明确告知详细报价由销售同事跟进）；<strong>涉及具体报价/折扣、账期、独家代理等敏感话题一律不擅自答复，立即转人工</strong>；客户 opt-out 即时加入黑名单并停止触达。所有 AI 应答均留痕可查。
+            </p>
+            <label>
+              <span>产品知识库 / 常见问答（喂给 AI 初轮应答，可留空）</span>
+              <textarea id="agentKnowledgeBase" rows="3" placeholder="例：MOQ 500 件起；打样 5-7 天；大货 25-35 天；支持定制 logo；已有 BSCI / LFGB / FDA；付款方式与账期请转销售。"></textarea>
+            </label>
+            <div class="button-row">
+              <button class="ghost-button" id="agentSaveKb" type="button">保存知识库</button>
+            </div>
+            <div class="agent-auto-log" id="agentAutoLog"></div>
           </section>
 
           <section class="panel">
@@ -1071,11 +1095,11 @@
 
     <div class="toast-stack" id="toastStack" aria-live="polite"></div>
 
-    <script src="./app.js?v=10" defer></script>
+    <script src="./app.js?v=11" defer></script>
     <script>
       // 缓存哨兵：若浏览器仍加载旧版 app.js（版本不匹配或加载失败导致按钮失灵），给出明确提示
       window.addEventListener("load", () => {
-        if (window.__APP_V !== "10") {
+        if (window.__APP_V !== "11") {
           const tip = document.createElement("div");
           tip.style.cssText =
             "position:fixed;top:0;left:0;right:0;z-index:9999;padding:12px 16px;background:#c2410c;color:#fff;font-size:14px;text-align:center;font-weight:700;";

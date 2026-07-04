@@ -965,6 +965,83 @@ button.management-row.is-selected {
   background: #f5fbf8;
 }
 
+/* 活动管理：7 列（活动/市场/阶段/线索/队列/回复/操作）+ 行内切换/重命名/删除 */
+.management-row.campaign-head,
+.management-row.campaign-row {
+  grid-template-columns: minmax(200px, 1.4fr) minmax(140px, 0.9fr) 84px 56px 56px 56px 84px;
+}
+
+.management-row.campaign-row.is-selected {
+  background: #f5fbf8;
+}
+
+.campaign-open {
+  display: block;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 0;
+  color: var(--ink);
+}
+
+.campaign-open:hover .company-name {
+  color: var(--teal-dark);
+}
+
+.campaign-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.campaign-actions .icon-button {
+  width: 32px;
+  min-height: 32px;
+  font-size: 14px;
+}
+
+.campaign-actions .icon-button[disabled] {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.tag-live {
+  background: #dcfce7;
+  color: var(--green);
+}
+
+.badge-alert {
+  background: #fde3e0;
+  color: #b42318;
+  font-weight: 800;
+}
+
+button.approval-card {
+  text-align: left;
+  cursor: pointer;
+}
+
+button.approval-card:hover {
+  border-color: var(--teal);
+}
+
+.approval-card.is-empty {
+  opacity: 0.6;
+}
+
+.health-ok {
+  color: var(--green);
+  font-weight: 700;
+}
+
+.health-bad {
+  color: #b42318;
+  font-weight: 700;
+}
+
+.health-soft {
+  color: var(--muted);
+}
+
 .job-board,
 .approval-list,
 .account-list,
@@ -1149,13 +1226,18 @@ button.management-row.is-selected {
     display: none;
   }
 
-  .management-row {
-    grid-template-columns: minmax(170px, 1fr) 74px 74px;
+  .management-row.campaign-head,
+  .management-row.campaign-row {
+    grid-template-columns: minmax(150px, 1fr) 48px 48px 72px;
   }
 
-  .management-row span:nth-child(2),
-  .management-row span:nth-child(3),
-  .management-row span:nth-child(6) {
+  /* 窄屏只留：活动 / 线索 / 队列 / 操作 */
+  .management-row.campaign-head span:nth-child(2),
+  .management-row.campaign-head span:nth-child(3),
+  .management-row.campaign-head span:nth-child(6),
+  .management-row.campaign-row > span:nth-child(2),
+  .management-row.campaign-row > span:nth-child(3),
+  .management-row.campaign-row > span:nth-child(6) {
     display: none;
   }
 

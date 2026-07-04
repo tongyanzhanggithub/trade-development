@@ -1,4 +1,4 @@
-window.__APP_V = "30";
+window.__APP_V = "31";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -258,7 +258,7 @@ function loadState() {
     if (!parsed.campaign) return createDemoState();
 
     const fallback = createDemoState();
-    return {
+    const merged = {
       ...fallback,
       ...parsed,
       campaign: { ...fallback.campaign, ...parsed.campaign },
@@ -289,6 +289,10 @@ function loadState() {
         ? mergeManagement(fallback.management, parsed.management)
         : fallback.management
     };
+    // 迁移：老数据的线索没有 campaignId，归到当前活动，保证活动计数不落空
+    const homeId = merged.activeCampaignId || merged.management.campaigns[0]?.id || null;
+    merged.prospects = merged.prospects.map((p) => (p.campaignId ? p : { ...p, campaignId: homeId }));
+    return merged;
   } catch {
     return createDemoState();
   }
@@ -366,35 +370,26 @@ function createManagementState(campaign) {
       {
         id: "campaign-demo",
         name: `${campaign.product} · ${normalizeMarkets(campaign.markets).slice(0, 2).join(", ")}`,
+        // 完整配置快照：切换活动时整套恢复，避免只换产品导致卖点/品类串味
         product: campaign.product,
         markets: campaign.markets,
+        customerType: campaign.customerType,
+        valueProps: campaign.valueProps,
+        certifications: campaign.certifications,
         owner: campaign.senderName,
-        status: "运行中",
-        stage: "开发中",
-        createdAt: dateOffset(0),
-        prospects: 0,
-        queued: 0,
-        replies: 0
+        companyName: campaign.companyName,
+        dailyLimit: campaign.dailyLimit,
+        presetKey: campaign.presetKey || null,
+        createdAt: dateOffset(0)
       }
     ],
     jobs: [
-      { id: "job-search", name: "搜索采集", cadence: "每 4 小时", status: "待执行", progress: 0, nextRun: "今天" },
-      { id: "job-enrich", name: "资料补全", cadence: "每 2 小时", status: "待执行", progress: 0, nextRun: "今天" },
-      { id: "job-verify", name: "邮箱/号码验证", cadence: "每 2 小时", status: "待执行", progress: 0, nextRun: "今天" },
-      { id: "job-sequence", name: "话术生成", cadence: "实时", status: "待执行", progress: 0, nextRun: "触发后" },
-      { id: "job-queue", name: "入队与限流", cadence: "每日", status: "待执行", progress: 0, nextRun: "明天 09:00" },
-      { id: "job-crm", name: "CRM 同步", cadence: "每 6 小时", status: "待配置", progress: 0, nextRun: "配置后" }
-    ],
-    approvals: [
-      { id: "approval-wa", type: "WhatsApp", title: "WhatsApp 冷启动消息需人工确认", count: 0, status: "待处理" },
-      { id: "approval-template", type: "模板", title: "邮件和 WhatsApp 话术审核", count: 4, status: "待处理" },
-      { id: "approval-risk", type: "风控", title: "低分线索不自动发送", count: 0, status: "待处理" }
-    ],
-    accounts: [
-      { id: "acct-email", channel: "Email", name: "企业邮箱", health: "正常", dailyLimit: 80, usedToday: 0 },
-      { id: "acct-wa", channel: "WhatsApp", name: "WhatsApp Business", health: "待接入", dailyLimit: 30, usedToday: 0 },
-      { id: "acct-search", channel: "Search API", name: "搜索采集", health: "本地模拟", dailyLimit: 200, usedToday: 0 },
-      { id: "acct-crm", channel: "CRM", name: "客户库同步", health: "待接入", dailyLimit: 500, usedToday: 0 }
+      { id: "job-search", name: "搜索采集", cadence: "点「运行待执行」或自动驾驶触发", status: "待执行", progress: 0, nextRun: "手动/自动驾驶" },
+      { id: "job-enrich", name: "资料补全", cadence: "点「运行待执行」或自动驾驶触发", status: "待执行", progress: 0, nextRun: "手动/自动驾驶" },
+      { id: "job-verify", name: "邮箱/号码验证", cadence: "点「运行待执行」或自动驾驶触发", status: "待执行", progress: 0, nextRun: "手动/自动驾驶" },
+      { id: "job-sequence", name: "话术生成", cadence: "入队时自动生成", status: "待执行", progress: 0, nextRun: "触发后" },
+      { id: "job-queue", name: "入队与限流", cadence: "点「运行待执行」或自动驾驶触发", status: "待执行", progress: 0, nextRun: "手动/自动驾驶" },
+      { id: "job-crm", name: "CRM 同步", cadence: "需配置 CRM Webhook", status: "待配置", progress: 0, nextRun: "配置后" }
     ],
     rules: {
       emailDailyLimit: 80,
@@ -410,8 +405,6 @@ function mergeManagement(fallback, current) {
   return {
     campaigns: Array.isArray(current.campaigns) ? current.campaigns : fallback.campaigns,
     jobs: Array.isArray(current.jobs) ? current.jobs : fallback.jobs,
-    approvals: Array.isArray(current.approvals) ? current.approvals : fallback.approvals,
-    accounts: Array.isArray(current.accounts) ? current.accounts : fallback.accounts,
     rules: { ...fallback.rules, ...(current.rules || {}) }
   };
 }
@@ -2488,29 +2481,33 @@ function renderManagement() {
   renderPipelineManager();
 }
 
+// 按活动实时统计（线索按 campaignId 归属，队列/回复据其线索反查）
+function campaignStats(id) {
+  const leads = state.prospects.filter((p) => (p.campaignId || null) === id);
+  const ids = new Set(leads.map((l) => l.id));
+  const queued =
+    state.outbox.filter((o) => ids.has(o.prospectId)).length +
+    state.whatsappQueue.filter((w) => ids.has(w.prospectId)).length;
+  const replies = leads.filter((l) => l.status === "已回复").length;
+  const stage = queued ? "触达中" : leads.length ? "采集中" : "待启动";
+  const status = leads.length ? "运行中" : "草稿";
+  return { prospects: leads.length, queued, replies, stage, status };
+}
+
 function refreshManagementDerivedData() {
+  // 把当前编辑中的配置同步回选中的活动（保证活动列表里显示的是最新配置）
   const activeCampaign = getActiveManagedCampaign();
   if (activeCampaign) {
     activeCampaign.product = state.campaign.product;
     activeCampaign.markets = state.campaign.markets;
-    activeCampaign.prospects = state.prospects.length;
-    activeCampaign.queued = state.outbox.length + state.whatsappQueue.length;
-    activeCampaign.replies = state.prospects.filter((item) => item.status === "已回复").length;
-    activeCampaign.stage = activeCampaign.queued ? "触达中" : state.prospects.length ? "采集中" : "待启动";
-    activeCampaign.status = state.prospects.length ? "运行中" : "草稿";
+    activeCampaign.customerType = state.campaign.customerType;
+    activeCampaign.valueProps = state.campaign.valueProps;
+    activeCampaign.certifications = state.campaign.certifications;
+    activeCampaign.owner = state.campaign.senderName;
+    activeCampaign.companyName = state.campaign.companyName;
+    activeCampaign.dailyLimit = state.campaign.dailyLimit;
+    activeCampaign.presetKey = state.campaign.presetKey || null;
   }
-
-  updateApprovalCount("approval-wa", state.whatsappQueue.filter((item) => item.status === "待人工确认").length);
-  updateApprovalCount("approval-template", state.sequence.length + state.whatsappSequence.length);
-  updateApprovalCount(
-    "approval-risk",
-    state.prospects.filter((item) => item.score < state.management.rules.scoreThreshold).length
-  );
-
-  updateAccountUsage("acct-email", state.outbox.length);
-  updateAccountUsage("acct-wa", state.whatsappQueue.length);
-  updateAccountUsage("acct-search", state.searchPlan.length);
-  updateAccountUsage("acct-crm", state.prospects.filter((item) => item.status === "已入队").length);
 }
 
 function getActiveManagedCampaign() {
@@ -2521,30 +2518,50 @@ function getActiveManagedCampaign() {
   );
 }
 
-function updateApprovalCount(id, count) {
-  const approval = state.management.approvals.find((item) => item.id === id);
-  if (!approval) return;
-  approval.count = count;
-  approval.status = count ? "待处理" : "已清空";
+// 审批中心：从真实待办实时汇总，每项可点击直达对应页面
+function realApprovals() {
+  const agentPending = (state.agent?.approvals || []).filter((a) => a.status === "pending").length;
+  const emailDrafts = state.outbox.filter((o) => o.status === "待审批").length;
+  const waPending = state.whatsappQueue.filter((w) => w.status === "待人工确认").length;
+  const emailReady = state.outbox.filter((o) => o.status === "待发送").length;
+  return [
+    { id: "ap-agent", type: "Agent", title: "Agent 触达卡待审批", count: agentPending, goto: "agent" },
+    { id: "ap-draft", type: "AI 草稿", title: "AI 回复草稿待审批", count: emailDrafts, goto: "automation" },
+    { id: "ap-wa", type: "WhatsApp", title: "WhatsApp 待人工确认", count: waPending, goto: "whatsapp" },
+    { id: "ap-send", type: "待发送", title: "邮件待批量审批发送", count: emailReady, goto: "automation" }
+  ];
 }
 
-function updateAccountUsage(id, usedToday) {
-  const account = state.management.accounts.find((item) => item.id === id);
-  if (!account) return;
-  account.usedToday = usedToday;
-  if (account.health !== "待接入") account.health = usedToday > account.dailyLimit ? "超限" : account.health;
+// 渠道账号：真实反映 Webhook 配置/测试状态与今日实际用量
+function connectorHealth(name) {
+  if (!(state.settings.mode === "webhook" && webhookUrl(name))) return "本地模拟";
+  const st = state.settings.webhookStatus?.[name];
+  if (!st) return "已接入·未测";
+  return st.ok ? "正常" : "异常";
+}
+
+function realAccounts() {
+  const today = dateOffset(0);
+  const waSentToday = state.whatsappQueue.filter(
+    (w) => w.status === "已发送" && (w.sentAt || "").slice(0, 10) === today
+  ).length;
+  return [
+    { channel: "Email", name: connectorHealth("send") === "本地模拟" ? "本地模拟发送" : "发信 Webhook", health: connectorHealth("send"), used: sentTodayCount(), limit: state.management.rules.emailDailyLimit },
+    { channel: "WhatsApp", name: connectorHealth("whatsapp") === "本地模拟" ? "本地待确认队列" : "WhatsApp Webhook", health: connectorHealth("whatsapp"), used: waSentToday, limit: state.management.rules.whatsappDailyLimit },
+    { channel: "Search API", name: connectorHealth("search") === "本地模拟" ? "本地/手动导入" : "采集 Webhook", health: connectorHealth("search"), used: null, limit: null },
+    { channel: "CRM", name: connectorHealth("crm") === "本地模拟" ? "本地看板" : "CRM Webhook", health: connectorHealth("crm"), used: null, limit: null }
+  ];
 }
 
 function renderManagementKpis() {
-  const pendingJobs = state.management.jobs.filter((job) => job.status !== "已完成").length;
-  const pendingApprovals = state.management.approvals.reduce((sum, item) => sum + item.count, 0);
-  const healthyAccounts = state.management.accounts.filter((item) => item.health === "正常" || item.health === "本地模拟").length;
+  const pendingApprovals = realApprovals().reduce((sum, item) => sum + item.count, 0);
+  const liveAccounts = realAccounts().filter((a) => a.health !== "异常").length;
   const kpis = [
     ["活动", state.management.campaigns.length, "正在管理的开发活动"],
-    ["自动化任务", pendingJobs, "待执行或待配置"],
-    ["审批", pendingApprovals, "需要人工确认"],
-    ["渠道", healthyAccounts, "可用账号/接口"],
-    ["规则", state.management.rules.scoreThreshold, "最低线索评分"]
+    ["线索总数", state.prospects.length, "全部活动累计线索"],
+    ["待审批", pendingApprovals, "需要人工确认/发送"],
+    ["渠道", liveAccounts, "在线渠道/接口"],
+    ["最低评分", state.management.rules.scoreThreshold, "低于此分不自动发送"]
   ];
 
   elements.managementKpis.innerHTML = kpis
@@ -2560,32 +2577,42 @@ function renderManagementKpis() {
     .join("");
 }
 
+const PRESET_LABEL = { moto: "摩托车", auto: "汽配", electronics: "电子", machinery: "机械" };
+
 function renderCampaignManager() {
   elements.campaignManager.innerHTML = `
-    <div class="management-row header">
+    <div class="management-row header campaign-head">
       <span>活动</span>
       <span>市场</span>
       <span>阶段</span>
       <span>线索</span>
       <span>队列</span>
-      <span>状态</span>
+      <span>回复</span>
+      <span>操作</span>
     </div>
     ${state.management.campaigns
-      .map(
-        (campaign) => `
-          <button class="management-row ${campaign.id === state.activeCampaignId ? "is-selected" : ""}" data-campaign-id="${campaign.id}" type="button">
-            <span>
-              <span class="company-name">${escapeHtml(campaign.name)}</span>
-              <span class="company-meta">${escapeHtml(campaign.product)} · ${escapeHtml(campaign.owner)}</span>
-            </span>
+      .map((campaign) => {
+        const st = campaignStats(campaign.id);
+        const active = campaign.id === state.activeCampaignId;
+        const presetTag = campaign.presetKey ? `<span class="tag">${PRESET_LABEL[campaign.presetKey] || campaign.presetKey}</span>` : "";
+        return `
+          <div class="management-row campaign-row ${active ? "is-selected" : ""}">
+            <button class="campaign-open" data-campaign-id="${campaign.id}" type="button" title="切换到该活动（整套配置恢复到控制台）">
+              <span class="company-name">${escapeHtml(campaign.name)} ${active ? '<span class="tag tag-live">当前</span>' : ""}</span>
+              <span class="company-meta">${escapeHtml(campaign.product)} · ${escapeHtml(campaign.owner || "未署名")} ${presetTag}</span>
+            </button>
             <span>${escapeHtml(campaign.markets)}</span>
-            <span><span class="tag">${escapeHtml(campaign.stage)}</span></span>
-            <span>${campaign.prospects}</span>
-            <span>${campaign.queued}</span>
-            <span><span class="badge">${escapeHtml(campaign.status)}</span></span>
-          </button>
-        `
-      )
+            <span><span class="tag">${st.stage}</span></span>
+            <span>${st.prospects}</span>
+            <span>${st.queued}</span>
+            <span>${st.replies}</span>
+            <span class="campaign-actions">
+              <button class="icon-button" data-campaign-rename="${campaign.id}" type="button" title="重命名" aria-label="重命名">✎</button>
+              <button class="icon-button" data-campaign-delete="${campaign.id}" type="button" title="删除活动" aria-label="删除"${state.management.campaigns.length <= 1 ? " disabled" : ""}>🗑</button>
+            </span>
+          </div>
+        `;
+      })
       .join("")}
   `;
 }
@@ -2610,33 +2637,39 @@ function renderJobBoard() {
 }
 
 function renderApprovalCenter() {
-  elements.approvalCenter.innerHTML = state.management.approvals
-    .map(
-      (item) => `
-        <article class="approval-card">
+  const items = realApprovals();
+  const total = items.reduce((s, i) => s + i.count, 0);
+  elements.approvalCenter.innerHTML =
+    (total === 0 ? `<div class="empty-state" style="grid-column:1/-1">暂无待审批事项 ✓</div>` : "") +
+    items
+      .map(
+        (item) => `
+        <button class="approval-card ${item.count ? "" : "is-empty"}" data-goto="${item.goto}" type="button" title="点击前往处理">
           <span>
             <strong>${escapeHtml(item.title)}</strong>
-            <span>${escapeHtml(item.type)} · ${item.count} 项</span>
+            <span>${escapeHtml(item.type)}${item.count ? " · 点击前往处理" : ""}</span>
           </span>
-          <span class="badge">${escapeHtml(item.status)}</span>
-        </article>
+          <span class="badge ${item.count ? "badge-alert" : ""}">${item.count}</span>
+        </button>
       `
-    )
-    .join("");
+      )
+      .join("");
 }
 
 function renderAccountManager() {
-  elements.accountManager.innerHTML = state.management.accounts
+  elements.accountManager.innerHTML = realAccounts()
     .map((account) => {
-      const usage = Math.min(100, Math.round((account.usedToday / Math.max(account.dailyLimit, 1)) * 100));
+      const hasQuota = account.limit != null;
+      const usage = hasQuota ? Math.min(100, Math.round((account.used / Math.max(account.limit, 1)) * 100)) : 0;
+      const healthClass = account.health === "异常" ? "health-bad" : account.health === "正常" ? "health-ok" : "health-soft";
       return `
         <article class="account-card">
           <div>
             <strong>${escapeHtml(account.channel)}</strong>
-            <span>${escapeHtml(account.name)} · ${escapeHtml(account.health)}</span>
+            <span>${escapeHtml(account.name)} · <span class="${healthClass}">${escapeHtml(account.health)}</span></span>
           </div>
           <div class="job-progress"><span style="width:${usage}%"></span></div>
-          <span>${account.usedToday}/${account.dailyLimit}</span>
+          <span>${hasQuota ? `今日 ${account.used}/${account.limit}` : "—"}</span>
         </article>
       `;
     })
@@ -2793,6 +2826,7 @@ function generateProspects(campaign, targetCount = 18, salt = "") {
         score: scoreProspect(source, market, index),
         confidence: 42 + ((index * 7 + marketIndex * 9) % 24),
         presetKey: campaign.presetKey || null,
+        campaignId: state.activeCampaignId || null,
         buyingSignal: `${market} 市场存在 ${campaign.product} 采购或分销线索`,
         companySize: ["11-50", "51-200", "201-500", "500+"][index % 4],
         searchQuery: query
@@ -2895,6 +2929,7 @@ function parseProspectLine(line, campaign, market) {
     score,
     confidence: directWebsite ? 72 : 48,
     presetKey: campaign.presetKey || null,
+    campaignId: state.activeCampaignId || null,
     buyingSignal: `从搜索结果导入，需核验是否采购 ${campaign.product}`,
     companySize: "待确认",
     searchQuery: line
@@ -4450,6 +4485,7 @@ function prospectFromFound(item, fallbackMarket, sourceLabel = "Claude 联网") 
     score: directWebsite ? 74 : 60,
     confidence: directWebsite ? 70 : 52,
     presetKey: state.campaign.presetKey || null,
+    campaignId: state.activeCampaignId || null,
     buyingSignal: item.note || `Claude 联网找到，疑似 ${state.campaign.product} 相关买家`,
     companySize: item.size || "待确认",
     searchQuery: item.note || "Claude 联网搜索"
@@ -6295,22 +6331,27 @@ function showToast(message) {
   }, 3600);
 }
 
-function saveCurrentCampaignSnapshot() {
-  const existing = getActiveManagedCampaign();
-  const snapshot = {
+// 从当前控制台配置构造/更新一个完整活动快照
+function campaignFromCurrentConfig(existing) {
+  return {
     id: existing?.id || makeId("campaign"),
-    name: `${state.campaign.product} · ${normalizeMarkets(state.campaign.markets).slice(0, 2).join(", ")}`,
+    name: existing?.name || `${state.campaign.product} · ${normalizeMarkets(state.campaign.markets).slice(0, 2).join(", ")}`,
     product: state.campaign.product,
     markets: state.campaign.markets,
+    customerType: state.campaign.customerType,
+    valueProps: state.campaign.valueProps,
+    certifications: state.campaign.certifications,
     owner: state.campaign.senderName,
-    status: state.prospects.length ? "运行中" : "草稿",
-    stage: state.outbox.length || state.whatsappQueue.length ? "触达中" : state.prospects.length ? "采集中" : "待启动",
-    createdAt: existing?.createdAt || dateOffset(0),
-    prospects: state.prospects.length,
-    queued: state.outbox.length + state.whatsappQueue.length,
-    replies: existing?.replies || 0
+    companyName: state.campaign.companyName,
+    dailyLimit: state.campaign.dailyLimit,
+    presetKey: state.campaign.presetKey || null,
+    createdAt: existing?.createdAt || dateOffset(0)
   };
+}
 
+function saveCurrentCampaignSnapshot() {
+  const existing = getActiveManagedCampaign();
+  const snapshot = campaignFromCurrentConfig(existing);
   const exists = state.management.campaigns.some((campaign) => campaign.id === snapshot.id);
   state.management.campaigns = exists
     ? state.management.campaigns.map((campaign) => (campaign.id === snapshot.id ? snapshot : campaign))
@@ -6321,22 +6362,62 @@ function saveCurrentCampaignSnapshot() {
 
 function createManagedCampaign() {
   readCampaignFromForm();
-  const campaign = {
-    id: makeId("campaign"),
-    name: `${state.campaign.product} · ${dateOffset(0)}`,
-    product: state.campaign.product,
-    markets: state.campaign.markets,
-    owner: state.campaign.senderName,
-    status: "草稿",
-    stage: "待启动",
-    createdAt: dateOffset(0),
-    prospects: 0,
-    queued: 0,
-    replies: 0
-  };
+  // 先把当前配置存回原活动，再开一个新活动（沿用当前配置作为起点，用户再改）
+  saveCurrentCampaignSnapshot();
+  const campaign = { ...campaignFromCurrentConfig(null), name: `新活动 · ${dateOffset(0)}` };
   state.management.campaigns.unshift(campaign);
   state.activeCampaignId = campaign.id;
-  addLog(`新建管理活动：${campaign.name}`);
+  addLog(`已新建活动「${campaign.name}」——改控制台配置即属于它，新找到的线索归它名下`);
+}
+
+// 切换活动：整套配置恢复到控制台（不再只换产品，避免卖点/品类串味）
+function activateManagedCampaign(id) {
+  saveCurrentCampaignSnapshot(); // 先存回旧活动，改动不丢
+  const c = state.management.campaigns.find((x) => x.id === id);
+  if (!c) return;
+  state.activeCampaignId = id;
+  state.campaign = {
+    ...state.campaign,
+    product: c.product,
+    markets: c.markets,
+    customerType: c.customerType || state.campaign.customerType,
+    valueProps: c.valueProps ?? state.campaign.valueProps,
+    certifications: c.certifications ?? state.campaign.certifications,
+    senderName: c.owner ?? state.campaign.senderName,
+    companyName: c.companyName ?? state.campaign.companyName,
+    dailyLimit: c.dailyLimit || state.campaign.dailyLimit,
+    presetKey: c.presetKey || null
+  };
+  bindCampaignForm();
+  addLog(`已切换到活动「${c.name}」，整套配置已恢复到控制台`);
+}
+
+function deleteManagedCampaign(id) {
+  if (state.management.campaigns.length <= 1) {
+    addLog("至少保留一个活动，无法删除最后一个");
+    return;
+  }
+  const target = state.management.campaigns.find((c) => c.id === id);
+  if (!target) return;
+  const leadCount = state.prospects.filter((p) => (p.campaignId || null) === id).length;
+  if (!window.confirm(`删除活动「${target.name}」？它名下 ${leadCount} 条线索会转到其它活动，线索本身不删除。`)) return;
+  state.management.campaigns = state.management.campaigns.filter((c) => c.id !== id);
+  const fallbackId = state.management.campaigns[0].id;
+  state.prospects = state.prospects.map((p) => ((p.campaignId || null) === id ? { ...p, campaignId: fallbackId } : p));
+  if (state.activeCampaignId === id) activateManagedCampaign(fallbackId);
+  addLog(`已删除活动「${target.name}」，${leadCount} 条线索已转移`);
+}
+
+function renameManagedCampaign(id) {
+  const c = state.management.campaigns.find((x) => x.id === id);
+  if (!c) return;
+  const next = window.prompt("重命名活动：", c.name);
+  if (next == null) return;
+  const name = next.trim();
+  if (name) {
+    c.name = name;
+    addLog(`活动已重命名为「${name}」`);
+  }
 }
 
 async function runPendingManagementJobs() {
@@ -6401,11 +6482,8 @@ function resetManagementJobs() {
 }
 
 function approveAllManagementItems() {
-  state.management.approvals = state.management.approvals.map((item) => ({
-    ...item,
-    count: 0,
-    status: "已通过"
-  }));
+  // Agent 待审批卡：审批放行（会入队+发送首触）
+  const pendingAgent = (state.agent?.approvals || []).filter((a) => a.status === "pending");
   let emailDrafts = 0;
   state.outbox.forEach((item) => {
     if (item.status === "待审批") {
@@ -6416,11 +6494,20 @@ function approveAllManagementItems() {
   state.whatsappQueue = state.whatsappQueue.map((item) =>
     item.status === "待人工确认" ? { ...item, status: "已审批" } : item
   );
-  addLog(emailDrafts ? `审批中心已全部通过（含 ${emailDrafts} 份 AI 邮件草稿转待发送）` : "审批中心已全部通过");
+  const parts = [];
+  if (pendingAgent.length) parts.push(`${pendingAgent.length} 张 Agent 触达卡`);
+  if (emailDrafts) parts.push(`${emailDrafts} 份 AI 邮件草稿转待发送`);
+  addLog(parts.length ? `审批中心已全部通过（${parts.join("、")}）` : "审批中心：暂无待审批事项");
 
-  // 审批通过后自动派发/发送，无需再去设置页手动操作
-  if (state.settings.mode === "webhook") dispatchPending();
-  else if (state.autopilot?.enabled) autopilotTick();
+  // Agent 卡审批（async，逐张放行并发送首触）
+  (async () => {
+    for (const a of pendingAgent) await agentApprove(a, true);
+    // 审批通过后自动派发/发送，无需再去设置页手动操作
+    if (state.settings.mode === "webhook") dispatchPending();
+    else if (state.autopilot?.enabled) autopilotTick();
+    saveState();
+    render();
+  })();
 }
 
 function saveManagementRules() {
@@ -7427,19 +7514,15 @@ elements.inboxTimeline.addEventListener("click", async (event) => {
 });
 
 elements.campaignManager.addEventListener("click", (event) => {
-  const row = event.target.closest("[data-campaign-id]");
-  if (!row) return;
-  const campaign = state.management.campaigns.find((item) => item.id === row.dataset.campaignId);
-  if (!campaign) return;
-  state.activeCampaignId = campaign.id;
-  state.campaign = {
-    ...state.campaign,
-    product: campaign.product,
-    markets: campaign.markets,
-    senderName: campaign.owner
-  };
-  bindCampaignForm();
-  addLog(`已切换管理活动：${campaign.name}`);
+  const renameId = event.target.closest("[data-campaign-rename]")?.dataset.campaignRename;
+  const deleteId = event.target.closest("[data-campaign-delete]")?.dataset.campaignDelete;
+  const openId = event.target.closest("[data-campaign-id]")?.dataset.campaignId;
+  if (renameId) renameManagedCampaign(renameId);
+  else if (deleteId) deleteManagedCampaign(deleteId);
+  else if (openId) {
+    if (openId === state.activeCampaignId) return; // 已是当前活动
+    activateManagedCampaign(openId);
+  } else return;
   saveState();
   render();
 });

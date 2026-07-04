@@ -1,4 +1,4 @@
-window.__APP_V = "29";
+window.__APP_V = "30";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -284,6 +284,7 @@ function loadState() {
         autoRespond: !!parsed.agent?.autoRespond
       },
       logs: Array.isArray(parsed.logs) ? parsed.logs : fallback.logs,
+      blacklist: Array.isArray(parsed.blacklist) ? parsed.blacklist : fallback.blacklist,
       management: parsed.management
         ? mergeManagement(fallback.management, parsed.management)
         : fallback.management
@@ -353,6 +354,7 @@ function createDemoState() {
     autopilot: { enabled: false, intervalSec: 8 },
     ui: { checklistDismissed: false, theme: "light", analyticsRange: "all" },
     agent: { task: null, approvals: [], autoRespond: false },
+    blacklist: [], // 持久退订黑名单：[{ email, domain, company, reason, at }]，清空线索池也不丢
     management: createManagementState(campaign),
     logs: [{ id: makeId("log"), time: timestamp(), message: "示例自动化活动已生成" }]
   };
@@ -1617,6 +1619,9 @@ function simulateInboundReply(prospectId) {
   // 规则1：客户回复 → 自动停止其剩余触达序列
   cancelSequenceOnReply(prospectId);
 
+  // 规则1.5：退订永久生效（无论是否开启 AI 自动应答），进持久黑名单
+  if (isOptOut(body)) markProspectOptOut(prospectId);
+
   // 规则2：意图驱动 CRM——询价/要样/MOQ/认证/交期 视为有效询盘，自动推进
   const intent = classifyIntent(body);
   if (["price", "sample", "moq", "cert", "leadtime", "discount"].includes(intent.key)) {
@@ -2787,6 +2792,7 @@ function generateProspects(campaign, targetCount = 18, salt = "") {
         status: "新发现",
         score: scoreProspect(source, market, index),
         confidence: 42 + ((index * 7 + marketIndex * 9) % 24),
+        presetKey: campaign.presetKey || null,
         buyingSignal: `${market} 市场存在 ${campaign.product} 采购或分销线索`,
         companySize: ["11-50", "51-200", "201-500", "500+"][index % 4],
         searchQuery: query
@@ -2818,6 +2824,8 @@ function importSearchResultsText(text, campaign) {
     if (!prospect) return;
     // 平台/社媒/目录站域名不作为客户线索
     if (prospect.website && NON_COMPANY_DOMAIN.test(prospect.website.replace(/^www\./, ""))) return;
+    // 退订黑名单：同邮箱/域名不再进池
+    if (isBlacklisted(prospect)) return;
     const key = prospect.website || prospect.company.toLowerCase();
     if (!key || seen.has(key)) return;
     seen.add(key);
@@ -2886,6 +2894,7 @@ function parseProspectLine(line, campaign, market) {
     status: "待审核",
     score,
     confidence: directWebsite ? 72 : 48,
+    presetKey: campaign.presetKey || null,
     buyingSignal: `从搜索结果导入，需核验是否采购 ${campaign.product}`,
     companySize: "待确认",
     searchQuery: line
@@ -2996,6 +3005,35 @@ function verifyProspectList(prospects) {
     confidence: prospect.email ? Math.min(98, prospect.confidence + 9) : prospect.confidence,
     score: prospect.email ? Math.min(99, prospect.score + 5) : prospect.score
   }));
+}
+
+/* ---------- 多语言：按市场加当地语言开场（正文英文，提升南美/中东回复率） ---------- */
+
+const MARKET_LANGUAGE = {
+  es: /colombia|peru|mexico|chile|argentina|ecuador|spain|bolivia|venezuela|guatemala|dominican|uruguay|paraguay|costa rica|panama|honduras|salvador|nicaragua/i,
+  pt: /brazil|brasil|portugal|angola|mozambique/i,
+  ar: /egypt|saudi|uae|united arab emirates|emirates|kuwait|qatar|oman|bahrain|jordan|iraq|morocco|algeria|tunisia|libya|yemen|lebanon/i,
+  fr: /france|senegal|ivory coast|cote d.ivoire|cameroon|congo|mali|burkina|niger|benin|togo|guinea|madagascar/i
+};
+
+function marketLanguage(market) {
+  const m = market || "";
+  for (const [lang, re] of Object.entries(MARKET_LANGUAGE)) {
+    if (re.test(m)) return lang;
+  }
+  return "en";
+}
+
+// 首封信的当地语言开场（一小段+说明英文在下方），非英语市场自动加
+function localIntroFor(market, greeting, product) {
+  const lang = marketLanguage(market);
+  const intros = {
+    es: `Estimado/a ${greeting}: Le escribimos desde Chongqing, China, como proveedor de ${product}. A continuación los detalles en inglés — también podemos atenderle en español.`,
+    pt: `Prezado(a) ${greeting}: Escrevemos de Chongqing, China, como fornecedor de ${product}. Abaixo seguem os detalhes em inglês — também podemos atender em português.`,
+    ar: `تحية طيبة ${greeting}، نراسلكم من تشونغتشينغ، الصين كمورد لـ ${product}. التفاصيل بالإنجليزية أدناه — ويمكننا التواصل بالعربية أيضًا.`,
+    fr: `Bonjour ${greeting}, nous vous écrivons depuis Chongqing (Chine) en tant que fournisseur de ${product}. Les détails suivent en anglais — nous pouvons aussi échanger en français.`
+  };
+  return intros[lang] || "";
 }
 
 // 重庆四大品类的专门开发信话术（套用品类模板后，首封+价值跟进自动换成该品类版本）
@@ -3125,7 +3163,11 @@ function buildEmailSequence(campaign, prospect) {
   const sender = campaign.senderName;
   const company = campaign.companyName;
   const greeting = prospect.contactName && prospect.contactName !== "待补全" ? prospect.contactName.split(" ")[0] : "there";
-  const tpl = CQ_EMAIL_TEMPLATES[campaign.presetKey];
+  // 优先用线索自己的品类（四品类并行时不串话术），线索没记品类才退回当前活动的品类
+  const tpl = CQ_EMAIL_TEMPLATES[prospect.presetKey || campaign.presetKey];
+  // 非英语市场：首封加当地语言开场（西/葡/阿/法），提高打开后的信任度与回复率
+  const localIntro = localIntroFor(prospect.market, greeting, product);
+  const withIntro = (body) => (localIntro ? `${localIntro}\n\n---\n\n${body}` : body);
 
   return [
     {
@@ -3133,7 +3175,7 @@ function buildEmailSequence(campaign, prospect) {
       label: "首封开发信",
       dayOffset: 0,
       subject: tpl ? tpl.firstSubject : `Supplier option for ${product}`,
-      body: tpl
+      body: withIntro(tpl
         ? tpl.first(greeting, prospect, sender, company)
         : `Hi ${greeting},
 
@@ -3145,7 +3187,7 @@ Would it be useful if I send a short catalog and a price range for reference?
 
 Best regards,
 ${sender}
-${company}`
+${company}`)
     },
     {
       id: makeId("email"),
@@ -4407,6 +4449,7 @@ function prospectFromFound(item, fallbackMarket, sourceLabel = "Claude 联网") 
     status: "新发现",
     score: directWebsite ? 74 : 60,
     confidence: directWebsite ? 70 : 52,
+    presetKey: state.campaign.presetKey || null,
     buyingSignal: item.note || `Claude 联网找到，疑似 ${state.campaign.product} 相关买家`,
     companySize: item.size || "待确认",
     searchQuery: item.note || "Claude 联网搜索"
@@ -4456,6 +4499,7 @@ function ingestFoundText(text, fallbackMarket, sourceLabel, opts = {}) {
   arr.forEach((item) => {
     const p = prospectFromFound(item, fallbackMarket, sourceLabel);
     if (p.website && NON_COMPANY_DOMAIN.test(p.website.replace(/^www\./, ""))) return;
+    if (isBlacklisted(p)) return; // 退订黑名单：联网再搜到也不进池
     const key = p.website || p.company.toLowerCase();
     if (!p.company || seenKeys.has(key)) return;
     seenKeys.add(key);
@@ -4569,7 +4613,7 @@ async function deepDigContact(prospectId, quiet = false) {
 }
 
 // 一键批量补全：对所有缺联系方式/新线索依次跑「AI 找联系人」链路（真实源→Claude→本地）
-async function bulkEnrichContacts() {
+async function bulkEnrichContacts(onProgress) {
   const targets = state.prospects.filter(
     (p) =>
       !p.email ||
@@ -4589,8 +4633,9 @@ async function bulkEnrichContacts() {
     // eslint-disable-next-line no-await-in-loop
     await enrichContactAI(t.id, true);
     done += 1;
+    if (onProgress) onProgress(done, targets.length);
     if (done % 3 === 0 || done === targets.length) {
-      addLog(`批量补全进度 ${done}/${targets.length}…`);
+      addLog(`批量补全进度 ${done}/${targets.length}…`, { toast: false });
       renderLogs();
     }
   }
@@ -4614,7 +4659,7 @@ async function generateSequenceAI() {
   addLog(`Claude 正在为 ${prospect.company} 深度写信…`);
   try {
     const system =
-      "你是顶尖外贸开发信专家。为指定客户写一套 4 封英文开发信序列（D0 首触 / D3 跟进 / D7 案例或样品 / D14 收尾）。每封 90-140 词，围绕该客户的业务与市场个性化切入，避免模板腔与夸张营销语。label 用中文。";
+      "你是顶尖外贸开发信专家。为指定客户写一套 4 封开发信序列（D0 首触 / D3 跟进 / D7 案例或样品 / D14 收尾）。每封 90-140 词，围绕该客户的业务与市场个性化切入，避免模板腔与夸张营销语。label 用中文。语言规则：按客户市场的商务语言写正文——拉美用西班牙语（巴西用葡萄牙语）、法语区非洲用法语、中东可英语正文+阿语问候；首封在正文下附简短英文版本；其他市场用英文。";
     const user = `产品: ${state.campaign.product}
 卖点: ${state.campaign.valueProps}
 认证: ${state.campaign.certifications}
@@ -5027,6 +5072,42 @@ function isOptOut(text) {
   );
 }
 
+/* ---------- 持久退订黑名单（按邮箱+域名，清空线索池不丢） ---------- */
+
+function prospectDomain(prospect) {
+  const fromEmail = (prospect?.email || "").split("@")[1] || "";
+  const fromSite = stripProtocol(prospect?.website || "").replace(/^www\./, "").split("/")[0];
+  return (fromEmail || fromSite || "").toLowerCase();
+}
+
+function addToBlacklist(prospect, reason = "opt-out") {
+  if (!state.blacklist) state.blacklist = [];
+  const email = (prospect?.email || "").toLowerCase();
+  const domain = prospectDomain(prospect);
+  if (!email && !domain) return false;
+  const exists = state.blacklist.some((b) => (email && b.email === email) || (domain && b.domain === domain));
+  if (exists) return false;
+  state.blacklist.push({ email, domain, company: prospect?.company || "", reason, at: new Date().toISOString() });
+  return true;
+}
+
+function isBlacklisted(prospect) {
+  if (!state.blacklist?.length) return false;
+  const email = (prospect?.email || "").toLowerCase();
+  const domain = prospectDomain(prospect);
+  return state.blacklist.some((b) => (email && b.email && b.email === email) || (domain && b.domain && b.domain === domain));
+}
+
+// opt-out 统一处理：标记线索 + 进持久黑名单（幂等，两条路径共用）
+function markProspectOptOut(prospectId, reason = "客户回信退订") {
+  const prospect = state.prospects.find((p) => p.id === prospectId);
+  if (!prospect) return;
+  const firstTime = !prospect.optOut;
+  prospect.optOut = true;
+  const added = addToBlacklist(prospect, reason);
+  if (firstTime || added) addLog(`⛔ ${prospect.company} 已进持久退订黑名单（同邮箱/域名以后不再触达，重建活动也不丢）`);
+}
+
 // 敏感话题：AI 一律不擅自答复，立即转人工。返回中文原因或 null
 function sensitiveTopic(text) {
   const t = (text || "").toLowerCase();
@@ -5113,7 +5194,7 @@ function autoReplyTemplate(prospect, intentKey) {
       sample: `Hi ${first}, for equipment we prepare a spec sheet, spare-parts list and after-sales terms rather than a physical sample; a sales colleague will follow up with these.`
     }
   };
-  const cat = catBodies[state.campaign.presetKey] || {};
+  const cat = catBodies[prospect.presetKey || state.campaign.presetKey] || {};
   const body = cat[intentKey] || bodies[intentKey] || bodies.other;
   return `${body}\n\nBest regards,\n${sender} (AI assistant)`;
 }
@@ -5123,7 +5204,7 @@ async function generateAutoReply(prospect, customerText, intentKey) {
     try {
       const system =
         "你是外贸售前 AI 助手，只负责答复标准售前问题。严格护栏：绝对不承诺任何具体价格、折扣、账期/付款条件或独家代理——这些必须留给销售同事。回复中要明确告知客户详细报价/条款将由销售同事跟进。基于提供的产品知识库作答。回复为英文、简洁、专业，含称呼与 AI 助手署名。";
-      const categoryFaq = CQ_KNOWLEDGE[state.campaign.presetKey] || "";
+      const categoryFaq = CQ_KNOWLEDGE[prospect.presetKey || state.campaign.presetKey] || "";
       const userFaq = state.campaign.knowledgeBase || "";
       const combinedFaq = [categoryFaq, userFaq].filter(Boolean).join("\n\n") || "（未提供，用通用话术）";
       const user = `产品: ${state.campaign.product}
@@ -5192,9 +5273,9 @@ async function handleInboundAutoRespond(prospectId) {
 
   const text = message.body;
 
-  // 护栏 1：opt-out 即时生效
+  // 护栏 1：opt-out 即时生效（并进持久黑名单）
   if (isOptOut(text)) {
-    prospect.optOut = true;
+    markProspectOptOut(prospectId);
     const cancelled = cancelSequenceOnReply(prospectId);
     message.autoAction = { type: "optout" };
     addLog(`⛔ 客户 opt-out：${prospect.company} 已加入黑名单，停止全部触达（取消 ${cancelled} 条待发）`);
@@ -5592,8 +5673,14 @@ function queueTopProspects() {
 async function runOneClickPipeline() {
   readCampaignFromForm();
   const useAI = aiEnabled();
+  // 步骤进度直接显示在按钮上，不用去日志里翻
+  const stepText = (t) => {
+    const s = elements.oneClickPipeline?.querySelector("span");
+    if (s) s.textContent = t;
+  };
 
   // ① 找客户
+  stepText("①/④ 联网找客户…");
   addLog("一键起量 ①/④：正在找客户…");
   renderLogs();
   let found = 0;
@@ -5622,12 +5709,14 @@ async function runOneClickPipeline() {
   }
 
   // ② 批量补全联系方式 + 验证邮箱
+  stepText("②/④ 补全联系方式…");
   addLog("一键起量 ②/④：批量补全联系方式…");
   renderLogs();
-  await bulkEnrichContacts();
+  await bulkEnrichContacts((done, total) => stepText(`②/④ 补全联系方式 ${done}/${total}…`));
   state.prospects = verifyProspectList(state.prospects, state.campaign);
 
   // ③ 生成待发：给有联系方式、未退订、未入队的线索按质量分排序排首触（冷启动取质量最高的一批）
+  stepText("③/④ 生成待发邮件…");
   addLog("一键起量 ③/④：按质量分排序生成待发邮件…");
   renderLogs();
   const cap = Math.min(state.campaign.dailyLimit || 20, 25);
@@ -5757,7 +5846,7 @@ function queueTopWhatsappProspects() {
 }
 
 function queueProspect(prospect, includeFullSequence = true) {
-  if (prospect.optOut) return;
+  if (prospect.optOut || isBlacklisted(prospect)) return;
   if (!prospect.email) {
     prospect = verifyProspectList(enrichProspectList([prospect], state.campaign), state.campaign)[0];
     state.prospects = state.prospects.map((item) => (item.id === prospect.id ? prospect : item));
@@ -5789,7 +5878,7 @@ function queueProspect(prospect, includeFullSequence = true) {
 }
 
 function queueWhatsappProspect(prospect, includeFullSequence = true) {
-  if (prospect.optOut) return;
+  if (prospect.optOut || isBlacklisted(prospect)) return;
   if (!prospect.phone) {
     prospect = verifyProspectList(enrichProspectList([prospect], state.campaign), state.campaign)[0];
     state.prospects = state.prospects.map((item) => (item.id === prospect.id ? prospect : item));
@@ -5862,6 +5951,10 @@ async function simulateSendNext() {
     addLog("没有待发送邮件");
     return;
   }
+  if (remainingDailyQuota() < 1) {
+    addLog(`发送安全阀：今日邮件额度已用完（已发 ${sentTodayCount()} 封），明天再发或在「管理 → 规则」调整日限`);
+    return;
+  }
   if (state.settings.mode === "webhook" && webhookUrl("send")) {
     const result = await callWebhook("send", { emails: [next] });
     if (result.ok) {
@@ -5882,13 +5975,29 @@ function emailLooksValid(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test((email || "").trim());
 }
 
+// 邮箱是否"来路可信"：按出处判断，不看模拟验证状态。
+// 可信：真实源(webhook)验证 / 客户回过信 / 导入原始邮箱 / 联网深挖标 verified / 非候选生成（直接从导入或联网结果带来）。
+// 不可信（要警告）：规则或 AI 按域名模式猜出来的候选邮箱（firstname.lastname / info / sales / guessed 等）。
+function emailLooksVerified(prospect, email) {
+  if (!prospect) return false;
+  if (prospect.contactSource === "webhook") return true;
+  if (prospect.status === "已回复") return true;
+  const target = email || prospect.email;
+  const cand = (prospect.emailCandidates || []).find((c) => c.email === target);
+  if (cand) return /verified|导入原始邮箱/.test(cand.pattern || "");
+  // 没有候选记录：邮箱是导入/联网抓来的原始地址，非模式猜测
+  return !!target;
+}
+
 // 发送预检：返回 { blockers:[], warnings:[], ok }。blockers 阻止发送，warnings 仅提示
 function preflightOutboxItem(item) {
   const prospect = state.prospects.find((p) => p.id === item.prospectId);
   const blockers = [];
   const warnings = [];
   if (prospect?.optOut) blockers.push("客户已退订");
+  if (isBlacklisted(prospect || { email: item.email })) blockers.push("在退订黑名单");
   if (!emailLooksValid(item.email)) blockers.push("邮箱缺失/格式无效");
+  else if (prospect && !emailLooksVerified(prospect, item.email)) warnings.push("邮箱为推测未验证（退信伤发信域名，建议先验证）");
   const sensitive = sensitiveTopic(`${item.subject || ""} ${item.body || ""}`);
   if (sensitive) warnings.push(`含敏感话题：${sensitive}`);
   const dup = state.outbox.some(
@@ -5909,10 +6018,48 @@ function preflightBadge(item) {
   return `<span class="pf-badge pf-ok">✓ 可发送</span>`;
 }
 
+/* ---------- 发送安全阀：发送时强制日限 + 预热提示（保护发信域名信誉） ---------- */
+
+function sentTodayCount() {
+  const today = dateOffset(0);
+  return state.outbox.filter((o) => o.status === "已发送" && (o.sentAt || "").slice(0, 10) === today).length;
+}
+
+function remainingDailyQuota() {
+  const limit = Math.min(
+    state.management?.rules?.emailDailyLimit || 80,
+    state.campaign?.dailyLimit || 300
+  );
+  return Math.max(0, limit - sentTodayCount());
+}
+
+// 对将要发送的列表应用日限；超出的部分保留待发并提示。返回可发的子集
+function applyDailyQuota(list, quiet = false) {
+  const remaining = remainingDailyQuota();
+  if (list.length <= remaining) return list;
+  const allowed = list.slice(0, remaining);
+  const held = list.length - allowed.length;
+  addLog(
+    `发送安全阀：今日邮件额度剩 ${remaining} 封（已发 ${sentTodayCount()}），本批 ${list.length} 封只放行 ${allowed.length}，其余 ${held} 封保留明天再发（保护发信域名，避免进垃圾箱）`,
+    { toast: !quiet }
+  );
+  return allowed;
+}
+
+// 新域名预热提示：历史总发送量还很小时，单日大批量最伤域名信誉
+function warmupHint(batchSize) {
+  const totalSent = state.outbox.filter((o) => o.status === "已发送").length;
+  if (batchSize > 20 && totalSent < 200) {
+    addLog("📮 预热提示：新发信域名前 1-2 周建议每天 ≤20 封并逐步加量，直接大批量发送容易被判定为垃圾邮件");
+  }
+}
+
 // 发送指定的一批发信队列条目（审批即发送，忽略排期日期）；复用 Webhook/本地
 async function sendOutboxItems(items) {
-  const toSend = items.filter((i) => i.status === "待发送" || i.status === "待审批");
+  let toSend = items.filter((i) => i.status === "待发送" || i.status === "待审批");
+  toSend = applyDailyQuota(toSend);
   if (!toSend.length) return 0;
+  warmupHint(toSend.length);
   if (state.settings.mode === "webhook" && webhookUrl("send")) {
     const result = await callWebhook("send", { emails: toSend });
     if (result.ok) {
@@ -5959,11 +6106,14 @@ async function batchApproveSend() {
 
 async function sendDueEmails(quiet = false) {
   const today = dateOffset(0);
-  const due = state.outbox.filter((item) => item.status === "待发送" && item.dueDate <= today);
+  let due = state.outbox.filter((item) => item.status === "待发送" && item.dueDate <= today);
   if (!due.length) {
     if (!quiet) addLog("今天没有到期待发送邮件");
     return 0;
   }
+  due = applyDailyQuota(due, quiet);
+  if (!due.length) return 0;
+  warmupHint(due.length);
 
   if (state.settings.mode === "webhook" && webhookUrl("send")) {
     const result = await callWebhook("send", { emails: due });

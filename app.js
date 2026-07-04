@@ -1,4 +1,4 @@
-window.__APP_V = "9";
+window.__APP_V = "10";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -131,7 +131,20 @@ const elements = {
   aiModelSelect: $("#aiModelSelect"),
   testAiEngine: $("#testAiEngine"),
   aiEngineTestStatus: $("#aiEngineTestStatus"),
-  aiWriteEmail: $("#aiWriteEmail")
+  aiWriteEmail: $("#aiWriteEmail"),
+  agentPromptInput: $("#agentPromptInput"),
+  agentParse: $("#agentParse"),
+  agentEngineTag: $("#agentEngineTag"),
+  agentTaskCard: $("#agentTaskCard"),
+  agentSteps: $("#agentSteps"),
+  agentFunnel: $("#agentFunnel"),
+  agentFunnelHint: $("#agentFunnelHint"),
+  agentApprovalPanel: $("#agentApprovalPanel"),
+  agentApprovalList: $("#agentApprovalList"),
+  agentApproveAll: $("#agentApproveAll"),
+  agentHandoff: $("#agentHandoff"),
+  agentDemoData: $("#agentDemoData"),
+  agentReset: $("#agentReset")
 };
 
 const WEBHOOK_CONNECTORS = {
@@ -248,6 +261,10 @@ function loadState() {
       relay: { ...fallback.relay, ...(parsed.relay || {}) },
       autopilot: { ...fallback.autopilot, ...(parsed.autopilot || {}) },
       ui: { ...fallback.ui, ...(parsed.ui || {}) },
+      agent: {
+        task: parsed.agent?.task || null,
+        approvals: Array.isArray(parsed.agent?.approvals) ? parsed.agent.approvals : []
+      },
       logs: Array.isArray(parsed.logs) ? parsed.logs : fallback.logs,
       management: parsed.management
         ? mergeManagement(fallback.management, parsed.management)
@@ -316,6 +333,7 @@ function createDemoState() {
     },
     autopilot: { enabled: false, intervalSec: 8 },
     ui: { checklistDismissed: false, theme: "light", analyticsRange: "all" },
+    agent: { task: null, approvals: [] },
     management: createManagementState(campaign),
     logs: [{ id: makeId("log"), time: timestamp(), message: "示例自动化活动已生成" }]
   };
@@ -482,6 +500,7 @@ function render() {
   renderInbox();
   renderCrm();
   renderAnalytics();
+  renderAgent();
   renderLogs();
   renderManagement();
   renderWebhookPanel();
@@ -2788,6 +2807,7 @@ async function runAutomation() {
 
   if (prospects?.length) {
     state.prospects = [...prospects, ...state.prospects];
+    agentOnProspectsImported(prospects);
   }
 
   // 没有任何线索可跑：主动带用户去导入，而不是静默结束
@@ -3162,7 +3182,8 @@ function renderNavBadges() {
     management:
       state.whatsappQueue.filter((i) => i.status === "待人工确认").length +
       state.outbox.filter((i) => i.status === "待审批").length,
-    automation: state.outbox.filter((i) => i.status === "待发送").length
+    automation: state.outbox.filter((i) => i.status === "待发送").length,
+    agent: state.agent.approvals.filter((a) => a.status === "pending").length
   };
   elements.navTabs.forEach((tab) => {
     const count = badges[tab.dataset.view] || 0;
@@ -3713,6 +3734,485 @@ function updateAiEngineButtons() {
     : engine === "claude"
       ? "Claude（未配置 Key）"
       : "本地规则";
+}
+
+/* ================== AI 自动获客 Agent（任务解析 → 寻客 → 审批 → 开发 → 移交） ================== */
+
+const AGENT_TASK_SCHEMA = {
+  type: "object",
+  properties: {
+    product: { type: "string", description: "客户经营/采购的产品品类，英文小写，如 outdoor furniture" },
+    markets: { type: "array", items: { type: "string" }, description: "目标市场英文名列表，如 United States" },
+    customer_type: {
+      type: "string",
+      enum: ["importer distributor", "retailer chain buyer", "brand private label", "wholesaler", "contractor project buyer"]
+    },
+    keywords: { type: "array", items: { type: "string" }, description: "3-6 个英文行业搜索词，含同义词与当地术语" },
+    size_note: { type: "string", description: "规模条件中文描述，没有则空字符串" },
+    exclusion_note: { type: "string", description: "排除条件中文描述，没有则空字符串" },
+    daily_limit: { type: "integer", description: "每日触达上限，未提及则 30" },
+    use_email: { type: "boolean" },
+    use_whatsapp: { type: "boolean" },
+    summary: { type: "string", description: "一句话中文复述任务" }
+  },
+  required: ["product", "markets", "customer_type", "keywords", "size_note", "exclusion_note", "daily_limit", "use_email", "use_whatsapp", "summary"],
+  additionalProperties: false
+};
+
+const AGENT_MARKET_WORDS = [
+  ["美国", "United States"], ["加拿大", "Canada"], ["德国", "Germany"], ["英国", "United Kingdom"],
+  ["法国", "France"], ["澳大利亚", "Australia"], ["澳洲", "Australia"], ["日本", "Japan"], ["韩国", "South Korea"],
+  ["中东", "United Arab Emirates"], ["阿联酋", "United Arab Emirates"], ["迪拜", "United Arab Emirates"],
+  ["墨西哥", "Mexico"], ["巴西", "Brazil"], ["西班牙", "Spain"], ["意大利", "Italy"], ["荷兰", "Netherlands"],
+  ["波兰", "Poland"], ["俄罗斯", "Russia"], ["印度", "India"], ["越南", "Vietnam"], ["泰国", "Thailand"],
+  ["东南亚", "Vietnam, Thailand"], ["欧洲", "Germany, France, United Kingdom"],
+  ["usa", "United States"], ["united states", "United States"], ["america", "United States"],
+  ["canada", "Canada"], ["germany", "Germany"], ["france", "France"], ["australia", "Australia"],
+  ["japan", "Japan"], ["mexico", "Mexico"], ["brazil", "Brazil"], ["spain", "Spain"], ["italy", "Italy"],
+  ["uae", "United Arab Emirates"], ["dubai", "United Arab Emirates"]
+];
+
+function parseAgentTaskLocal(prompt) {
+  const lower = prompt.toLowerCase();
+  const markets = [];
+  AGENT_MARKET_WORDS.forEach(([word, market]) => {
+    const hit = /[a-z]/.test(word) ? new RegExp(`\\b${word}\\b`, "i").test(lower) : prompt.includes(word);
+    if (hit) market.split(", ").forEach((m) => !markets.includes(m) && markets.push(m));
+  });
+
+  let customerType = "importer distributor";
+  if (/零售|连锁|retail/i.test(prompt)) customerType = "retailer chain buyer";
+  else if (/品牌|贴牌|oem|private label/i.test(prompt)) customerType = "brand private label";
+  else if (/工程|项目采购|contractor/i.test(prompt)) customerType = "contractor project buyer";
+  else if (/批发|wholesal/i.test(prompt) && !/进口|import|经销|distribut/i.test(prompt)) customerType = "wholesaler";
+
+  let product = "";
+  const zhMatch = prompt.match(/做(.{2,20}?)(?:批发|进口|贸易|生意|的)/);
+  if (zhMatch) product = zhMatch[1].trim();
+  const enMatch = prompt.match(/[a-zA-Z][a-zA-Z\s]{3,40}[a-zA-Z]/);
+  if (!product && enMatch && !/whatsapp/i.test(enMatch[0])) product = enMatch[0].trim().toLowerCase();
+  if (!product) product = state.campaign.product;
+
+  const limitMatch = prompt.match(/(?:每日|每天|日|上限)[^\d]{0,6}(\d{1,3})/) || prompt.match(/(\d{1,3})\s*家/);
+  const sizeMatch = prompt.match(/规模[^，。,]{0,30}/);
+  const exclMatch = prompt.match(/排除[^，。,]{0,30}/);
+
+  return {
+    product,
+    markets: markets.length ? markets : normalizeMarkets(state.campaign.markets),
+    customer_type: customerType,
+    keywords: [product, `${product} wholesale`, `${product} importer`].filter(Boolean),
+    size_note: sizeMatch ? sizeMatch[0] : "",
+    exclusion_note: exclMatch ? exclMatch[0] : "已在 CRM 中的客户自动去重",
+    daily_limit: clamp(Number(limitMatch?.[1]) || 30, 1, 300),
+    use_email: !/只发?\s*whatsapp/i.test(prompt),
+    use_whatsapp: !/只发?(开发信|邮件)|不.{0,3}whatsapp/i.test(prompt),
+    summary: prompt.slice(0, 80)
+  };
+}
+
+async function parseAgentTask() {
+  const prompt = elements.agentPromptInput.value.trim();
+  if (!prompt) {
+    addLog("请先用一句话描述你要开发的客户");
+    return;
+  }
+  let parsed = null;
+  let source = "local";
+  if (aiEnabled()) {
+    elements.agentEngineTag.textContent = "Claude 解析中…";
+    try {
+      parsed = await callClaude(
+        "你是外贸获客任务解析器。把用户的一句话客户开发需求解析为结构化任务。markets 必须是英文国家/地区名；keywords 用英文并扩展同义词与当地行业术语；未提及的条件给合理默认值。",
+        prompt,
+        AGENT_TASK_SCHEMA,
+        1200
+      );
+      source = "claude";
+    } catch (error) {
+      addLog(`Claude 解析失败，已用本地规则：${error.message}`);
+    }
+  }
+  if (!parsed) parsed = parseAgentTaskLocal(prompt);
+
+  state.agent.task = {
+    id: makeId("agent"),
+    prompt,
+    parsed,
+    source,
+    approvalMode: "review",
+    status: "draft",
+    funnel: { raw: 0, matched: 0, verified: 0, deduped: 0, scored: 0 },
+    startedAt: timestamp()
+  };
+  state.agent.approvals = [];
+  addLog(`任务解析完成（${source === "claude" ? "Claude" : "本地规则"}）：请在任务卡片中确认后启动`);
+  saveState();
+  render();
+}
+
+function confirmAgentTask() {
+  const task = state.agent.task;
+  if (!task) return;
+  const parsed = task.parsed;
+  parsed.product = $("#agentFProduct").value.trim() || parsed.product;
+  parsed.markets = $("#agentFMarkets").value.split(/[,，]/).map((m) => m.trim()).filter(Boolean);
+  parsed.customer_type = $("#agentFType").value;
+  parsed.daily_limit = clamp(Number($("#agentFLimit").value) || 30, 1, 300);
+  parsed.keywords = $("#agentFKeywords").value.split(/[,，]/).map((k) => k.trim()).filter(Boolean);
+  parsed.use_email = $("#agentFEmail").checked;
+  parsed.use_whatsapp = $("#agentFWa").checked;
+
+  state.campaign = {
+    ...state.campaign,
+    product: parsed.product,
+    markets: parsed.markets.join(", "),
+    customerType: parsed.customer_type,
+    dailyLimit: parsed.daily_limit
+  };
+  bindCampaignForm();
+  state.searchPlan = generateSearchPlan(state.campaign);
+  task.status = "prospecting";
+  addLog(
+    `Agent 任务已启动（${task.approvalMode === "review" ? "逐条审批" : task.approvalMode === "spot" ? "批量抽审" : "全自动"}）：已生成 ${state.searchPlan.length} 条搜索任务。去「搜索」导入真实结果，或点「用演示数据体验」`
+  );
+  if (task.approvalMode === "auto" && !state.autopilot?.enabled) setAutopilot(true);
+  saveState();
+  render();
+}
+
+function agentOnProspectsImported(imported) {
+  const task = state.agent.task;
+  if (!task || task.status === "draft" || !imported.length) return;
+
+  task.funnel.raw += imported.length;
+  const marketSet = new Set(task.parsed.markets);
+  const matched = imported.filter((p) => !marketSet.size || marketSet.has(p.market));
+  task.funnel.matched += matched.length;
+
+  const ids = new Set(matched.map((p) => p.id));
+  const processed = verifyProspectList(
+    enrichProspectList(state.prospects.filter((p) => ids.has(p.id)), state.campaign),
+    state.campaign
+  );
+  const byId = new Map(processed.map((p) => [p.id, p]));
+  state.prospects = state.prospects.map((p) => byId.get(p.id) || p);
+  const verified = processed.filter((p) => p.emailStatus === "格式有效");
+  task.funnel.verified += verified.length;
+  task.funnel.deduped = task.funnel.verified; // 跨渠道去重在导入阶段已完成
+
+  const capacity = Math.max(0, task.parsed.daily_limit - state.agent.approvals.length);
+  const qualified = verified
+    .map((p) => ({ p, score: computeLeadScore(p).probability }))
+    .filter((x) => x.score >= 40)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, capacity);
+  task.funnel.scored += qualified.length;
+
+  qualified.forEach(({ p }) => {
+    if (state.agent.approvals.some((a) => a.prospectId === p.id)) return;
+    state.agent.approvals.push({ id: makeId("appr"), prospectId: p.id, status: "pending", at: timestamp() });
+  });
+
+  if (task.approvalMode !== "review") {
+    state.agent.approvals.filter((a) => a.status === "pending").forEach((a) => agentApprove(a, true));
+    addLog(`Agent：${qualified.length} 个高分客户已按「${task.approvalMode === "spot" ? "批量抽审" : "全自动"}」模式自动通过并入队`);
+  } else if (qualified.length) {
+    addLog(`Agent：${qualified.length} 个高分客户已生成触达方案，等待审批`);
+  }
+  task.status = state.agent.approvals.some((a) => a.status === "pending") ? "reviewing" : "outreach";
+}
+
+function agentApprove(approval, quiet = false) {
+  const task = state.agent.task;
+  const prospect = state.prospects.find((p) => p.id === approval.prospectId);
+  if (!prospect) {
+    approval.status = "skipped";
+    return;
+  }
+  if (task.parsed.use_email !== false) queueProspect(prospect, true);
+  if (task.parsed.use_whatsapp && prospect.phone) queueWhatsappProspect(prospect, true);
+  approval.status = "approved";
+  if (!quiet) addLog(`已批准触达：${prospect.company}`);
+  if (!state.agent.approvals.some((a) => a.status === "pending")) task.status = "outreach";
+}
+
+const AGENT_HOT_INTENTS = ["price", "sample", "moq", "cert", "leadtime", "discount"];
+
+function agentHandoffData() {
+  const hot = [];
+  const warm = [];
+  const rejected = [];
+  let silent = 0;
+  buildConversations().forEach((c) => {
+    if (c.replied) {
+      const stored = getStoredAI(c.prospectId);
+      const local = getConversationIntent(c);
+      const key = stored ? stored.intent : local?.key;
+      const label = stored ? stored.intent_label : local?.label || "已回复";
+      const summary = stored ? stored.summary : null;
+      if (AGENT_HOT_INTENTS.includes(key)) hot.push({ c, label, summary });
+      else if (key === "reject") rejected.push({ c, label });
+      else warm.push({ c, label });
+    } else if (c.events.some((e) => e.kind === "outbound" && e.status === "已发送")) {
+      silent += 1;
+    }
+  });
+  return { hot, warm, rejected, silent };
+}
+
+function computeAgentInsight() {
+  const markets = {};
+  state.prospects.forEach((p) => {
+    const touched =
+      state.outbox.some((o) => o.prospectId === p.id && o.status === "已发送") ||
+      state.whatsappQueue.some((w) => w.prospectId === p.id && w.status === "已发送");
+    if (!touched) return;
+    markets[p.market] = markets[p.market] || { touched: 0, replied: 0 };
+    markets[p.market].touched += 1;
+    if (isReplied(p)) markets[p.market].replied += 1;
+  });
+  const rows = Object.entries(markets).filter(([, v]) => v.touched >= 2);
+  if (rows.length < 2) return "";
+  const totalTouched = rows.reduce((s, [, v]) => s + v.touched, 0);
+  const totalReplied = rows.reduce((s, [, v]) => s + v.replied, 0);
+  const avg = totalReplied / totalTouched;
+  const best = rows
+    .map(([m, v]) => ({ m, rate: v.replied / v.touched, replied: v.replied }))
+    .filter((x) => x.replied >= 2 && x.rate >= avg * 1.5)
+    .sort((a, b) => b.rate - a.rate)[0];
+  return best ? `效果回流：「${best.m}」回复率 ${Math.round(best.rate * 100)}%（均值 ${Math.round(avg * 100)}%），建议下一批向该市场倾斜。` : "";
+}
+
+function renderAgentTaskCard() {
+  const card = elements.agentTaskCard;
+  const task = state.agent.task;
+  if (!task) {
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+  const parsed = task.parsed;
+  const sourceTag = task.source === "claude" ? "Claude 解析" : "本地规则解析";
+
+  if (task.status !== "draft") {
+    const modeLabel = { review: "逐条审批", spot: "批量抽审", auto: "全自动" }[task.approvalMode];
+    card.innerHTML = `
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">Task running</p>
+          <h2>任务运行中</h2>
+        </div>
+        <span class="status-pill">${modeLabel} · ${task.startedAt}</span>
+      </div>
+      <p class="ai-summary">${escapeHtml(parsed.summary || task.prompt)}</p>
+      <div class="conversation-meta">
+        <span class="badge">${escapeHtml(parsed.product)}</span>
+        ${parsed.markets.map((m) => `<span class="tag">${escapeHtml(m)}</span>`).join("")}
+        <span class="tag">日上限 ${parsed.daily_limit}</span>
+        ${parsed.use_email ? `<span class="channel-badge email">邮件</span>` : ""}
+        ${parsed.use_whatsapp ? `<span class="channel-badge whatsapp">WhatsApp</span>` : ""}
+      </div>
+    `;
+    return;
+  }
+
+  const typeOptions = [
+    ["importer distributor", "进口商 / 经销商"],
+    ["retailer chain buyer", "零售连锁 / 采购"],
+    ["brand private label", "品牌商 / 贴牌"],
+    ["wholesaler", "批发商"],
+    ["contractor project buyer", "工程商 / 项目采购"]
+  ]
+    .map(([v, l]) => `<option value="${v}" ${parsed.customer_type === v ? "selected" : ""}>${l}</option>`)
+    .join("");
+
+  card.innerHTML = `
+    <div class="panel-heading">
+      <div>
+        <p class="eyebrow">Step 2 · 任务卡片</p>
+        <h2>确认解析结果后启动</h2>
+      </div>
+      <span class="tag">${sourceTag}</span>
+    </div>
+    <p class="ai-summary">${escapeHtml(parsed.summary || task.prompt)}</p>
+    <div class="form-grid">
+      <label><span>产品 / 行业</span><input id="agentFProduct" value="${escapeHtml(parsed.product)}" /></label>
+      <label><span>目标市场（逗号分隔）</span><input id="agentFMarkets" value="${escapeHtml(parsed.markets.join(", "))}" /></label>
+      <label><span>客户类型</span><select id="agentFType">${typeOptions}</select></label>
+      <label><span>每日触达上限</span><input id="agentFLimit" type="number" min="1" max="300" value="${parsed.daily_limit}" /></label>
+    </div>
+    <label><span>搜索关键词（AI 已扩展同义词）</span><input id="agentFKeywords" value="${escapeHtml(parsed.keywords.join(", "))}" /></label>
+    <div class="form-grid">
+      <label><span>规模条件</span><input value="${escapeHtml(parsed.size_note || "未指定")}" disabled /></label>
+      <label><span>排除条件</span><input value="${escapeHtml(parsed.exclusion_note || "CRM 已有客户自动去重")}" disabled /></label>
+    </div>
+    <div class="agent-mode-row">
+      <div class="agent-channels">
+        <label class="toggle-row"><input id="agentFEmail" type="checkbox" ${parsed.use_email ? "checked" : ""} /><span>邮件触达</span></label>
+        <label class="toggle-row"><input id="agentFWa" type="checkbox" ${parsed.use_whatsapp ? "checked" : ""} /><span>WhatsApp 接力</span></label>
+      </div>
+      <div class="segmented" role="group" aria-label="审批模式">
+        <button class="segment ${task.approvalMode === "review" ? "is-active" : ""}" data-approval-mode="review" type="button" title="每个客户人工确认后发送（推荐冷启动）">逐条审批</button>
+        <button class="segment ${task.approvalMode === "spot" ? "is-active" : ""}" data-approval-mode="spot" type="button" title="自动发送，用户抽查">批量抽审</button>
+        <button class="segment ${task.approvalMode === "auto" ? "is-active" : ""}" data-approval-mode="auto" type="button" title="全自动 + 自动驾驶">全自动</button>
+      </div>
+    </div>
+    <div class="button-row">
+      <button class="primary-button" data-agent-action="confirm" type="button"><svg><use href="#icon-rocket" /></svg><span>确认并启动</span></button>
+      <button class="ghost-button" data-agent-action="discard" type="button">重新解析</button>
+    </div>
+  `;
+}
+
+function renderAgentSteps() {
+  const task = state.agent.task;
+  const approvals = state.agent.approvals;
+  const { hot } = agentHandoffData();
+  const sent = state.outbox.filter((o) => o.status === "已发送").length;
+  const approvedCount = approvals.filter((a) => a.status === "approved").length;
+  const steps = [
+    ["任务解析", !!task, task ? (task.source === "claude" ? "Claude" : "本地规则") : "待下达"],
+    ["自动寻客", (task?.funnel.raw || 0) > 0, task ? `${task.funnel.raw} 条原始线索` : "—"],
+    ["触达审批", approvals.length > 0 && !approvals.some((a) => a.status === "pending"), `${approvedCount}/${approvals.length} 已批准`],
+    ["自动开发", sent > 0, `${sent} 次已发送`],
+    ["意向移交", hot.length > 0, `${hot.length} 个热意向`]
+  ];
+  elements.agentSteps.innerHTML = steps
+    .map(
+      ([name, done, hint], index) => `
+        <div class="workflow-step ${done ? "" : "is-waiting"}">
+          <span class="step-index">${index + 1}</span>
+          <div><strong>${name}</strong><span>${hint}</span></div>
+          <span class="status-pill">${done ? "完成" : "等待"}</span>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function renderAgentFunnel() {
+  const task = state.agent.task;
+  if (!task || !task.funnel.raw) {
+    elements.agentFunnel.innerHTML = `<div class="empty-state">启动任务并导入线索后，这里展示 抓取→匹配→验证→评分 漏斗</div>`;
+    elements.agentFunnelHint.textContent = "";
+    return;
+  }
+  const f = task.funnel;
+  const rows = [
+    ["原始抓取", f.raw],
+    ["画像匹配", f.matched],
+    ["验证通过", f.verified],
+    ["去重后", f.deduped],
+    ["高分入围", f.scored]
+  ];
+  const top = Math.max(1, f.raw);
+  elements.agentFunnel.innerHTML = rows
+    .map(
+      ([label, count]) => `
+        <div class="funnel-row">
+          <span>${label}</span>
+          <div class="funnel-bar"><span style="width:${Math.max(3, Math.round((count / top) * 100))}%"></span></div>
+          <span class="funnel-figure"><strong>${count}</strong></span>
+        </div>
+      `
+    )
+    .join("");
+  elements.agentFunnelHint.textContent = `按「验证通过的有效线索」计量：${f.raw} 条原始 → ${f.scored} 条高分入围（评分阈值动态，日上限 ${task.parsed.daily_limit}）`;
+}
+
+function renderAgentApprovals() {
+  const task = state.agent.task;
+  const approvals = state.agent.approvals;
+  const pending = approvals.filter((a) => a.status === "pending");
+  elements.agentApprovalPanel.hidden = !task || approvals.length === 0;
+  elements.agentApproveAll.hidden = pending.length === 0;
+  if (elements.agentApprovalPanel.hidden) return;
+
+  elements.agentApprovalList.innerHTML = approvals
+    .map((approval) => {
+      const prospect = state.prospects.find((p) => p.id === approval.prospectId);
+      if (!prospect) return "";
+      const score = computeLeadScore(prospect);
+      const email = buildEmailSequence(state.campaign, prospect)[0];
+      const wa = buildWhatsappSequence(state.campaign, prospect)[0];
+      const topFactors = score.factors.filter((fa) => fa.points > 0).slice(0, 3).map((fa) => fa.label).join(" · ");
+      const statusBadge =
+        approval.status === "approved"
+          ? `<span class="status-pill">已批准发送</span>`
+          : approval.status === "skipped"
+            ? `<span class="tag">已跳过</span>`
+            : `<span class="due-tag unplanned">待审批</span>`;
+      const actions =
+        approval.status === "pending"
+          ? `<div class="ai-actions">
+              <button class="primary-button" data-agent-approve="${approval.id}" type="button"><svg><use href="#icon-check" /></svg><span>通过并发送</span></button>
+              <button class="ghost-button" data-agent-skip="${approval.id}" type="button">跳过</button>
+            </div>`
+          : "";
+      return `
+        <article class="agent-approval-card">
+          <div class="crm-card-top">
+            <strong>${escapeHtml(prospect.company)}</strong>
+            <span><span class="prob-grade grade-${score.grade}">${score.grade}</span><span class="score">${score.probability}%</span></span>
+          </div>
+          <div class="crm-card-meta">
+            <span>${escapeHtml(prospect.market)} · ${escapeHtml(prospect.contactName)} · ${escapeHtml(prospect.email || "")}</span>
+          </div>
+          <p class="approval-why">为什么值得开发：${escapeHtml(topFactors || "画像匹配")}</p>
+          <div class="approval-previews">
+            <div class="approval-preview"><span class="channel-badge email">邮件首触</span><strong>${escapeHtml(email?.subject || "")}</strong><p>${escapeHtml((email?.body || "").slice(0, 150))}…</p></div>
+            ${task.parsed.use_whatsapp && prospect.phone ? `<div class="approval-preview"><span class="channel-badge whatsapp">WhatsApp</span><p>${escapeHtml((wa?.message || "").slice(0, 130))}…</p></div>` : ""}
+          </div>
+          ${statusBadge}
+          ${actions}
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function renderAgentHandoff() {
+  const { hot, warm, rejected, silent } = agentHandoffData();
+  const insight = computeAgentInsight();
+  const hotHtml = hot.length
+    ? hot
+        .map(
+          ({ c, label, summary }) => `
+            <article class="agent-hot-card">
+              <div class="crm-card-top">
+                <strong>🔥 ${escapeHtml(c.company)}</strong>
+                <span class="intent-tag red">意图：${escapeHtml(label)}</span>
+              </div>
+              <p class="approval-why">${escapeHtml(summary || summarizeConversation(c))}</p>
+              <div class="ai-actions">
+                <button class="primary-button" data-agent-takeover="${c.prospectId}" type="button"><svg><use href="#icon-inbox" /></svg><span>接管会话</span></button>
+              </div>
+            </article>
+          `
+        )
+        .join("")
+    : `<div class="empty-state">暂无热意向。客户回复询价/要样/问交期时会出现在这里并推送接管</div>`;
+  const warmHtml = warm.length
+    ? warm.map(({ c, label }) => `<span class="tag">🌤 ${escapeHtml(c.company)} · ${escapeHtml(label)}</span>`).join("")
+    : `<span class="tag">暂无</span>`;
+
+  elements.agentHandoff.innerHTML = `
+    <div class="handoff-tier"><p class="eyebrow">🔥 热意向 · 立即接管</p>${hotHtml}</div>
+    <div class="handoff-tier"><p class="eyebrow">🌤 温 · 进入培育（回复但未询价）</p><div class="conversation-meta">${warmHtml}</div></div>
+    <div class="handoff-tier"><p class="eyebrow">❄️ 冷</p><div class="conversation-meta"><span class="tag">已读不回 ${silent} 家（30 天后换角度再触达）</span><span class="tag">明确拒绝 ${rejected.length} 家（进黑名单）</span></div></div>
+    ${insight ? `<div class="impact-lift">${escapeHtml(insight)}</div>` : ""}
+  `;
+}
+
+function renderAgent() {
+  if (!elements.agentTaskCard) return;
+  elements.agentEngineTag.textContent = aiEnabled() ? `Claude 解析 · ${state.settings.aiModel}` : "本地规则解析";
+  renderAgentTaskCard();
+  renderAgentSteps();
+  renderAgentFunnel();
+  renderAgentApprovals();
+  renderAgentHandoff();
 }
 
 function normalizeRemoteProspects(items) {
@@ -4422,6 +4922,7 @@ elements.createProspects.addEventListener("click", () => {
   state.selectedProspectId = state.prospects[0]?.id || null;
   state.sequence = buildEmailSequence(state.campaign, getSelectedProspect());
   state.whatsappSequence = buildWhatsappSequence(state.campaign, getSelectedProspect());
+  agentOnProspectsImported(imported);
   addLog(`导入 ${imported.length} 个真实搜索结果线索`);
   saveState();
   render();
@@ -4719,6 +5220,97 @@ elements.openPaletteBtn.addEventListener("click", openPalette);
 
 elements.aiWriteEmail.addEventListener("click", generateSequenceAI);
 elements.testAiEngine.addEventListener("click", testAiEngineConnection);
+
+/* ---------- AI Agent 事件 ---------- */
+
+elements.agentParse.addEventListener("click", parseAgentTask);
+
+elements.agentTaskCard.addEventListener("click", (event) => {
+  const task = state.agent.task;
+  if (!task) return;
+  const modeBtn = event.target.closest("[data-approval-mode]");
+  if (modeBtn) {
+    task.approvalMode = modeBtn.dataset.approvalMode;
+    elements.agentTaskCard
+      .querySelectorAll("[data-approval-mode]")
+      .forEach((b) => b.classList.toggle("is-active", b === modeBtn));
+    saveState();
+    return;
+  }
+  const action = event.target.closest("[data-agent-action]")?.dataset.agentAction;
+  if (action === "confirm") confirmAgentTask();
+  else if (action === "discard") {
+    state.agent.task = null;
+    state.agent.approvals = [];
+    saveState();
+    render();
+  }
+});
+
+elements.agentApprovalList.addEventListener("click", (event) => {
+  const approveId = event.target.closest("[data-agent-approve]")?.dataset.agentApprove;
+  const skipId = event.target.closest("[data-agent-skip]")?.dataset.agentSkip;
+  if (!approveId && !skipId) return;
+  const approval = state.agent.approvals.find((a) => a.id === (approveId || skipId));
+  if (!approval) return;
+  if (approveId) {
+    agentApprove(approval);
+  } else {
+    approval.status = "skipped";
+    addLog("已跳过该客户");
+    if (!state.agent.approvals.some((a) => a.status === "pending")) state.agent.task.status = "outreach";
+  }
+  saveState();
+  render();
+});
+
+elements.agentApproveAll.addEventListener("click", () => {
+  const pending = state.agent.approvals.filter((a) => a.status === "pending");
+  pending.forEach((approval) => agentApprove(approval, true));
+  addLog(`已批量批准 ${pending.length} 个触达方案并入队发送`);
+  saveState();
+  render();
+});
+
+elements.agentHandoff.addEventListener("click", (event) => {
+  const id = event.target.closest("[data-agent-takeover]")?.dataset.agentTakeover;
+  if (!id) return;
+  state.selectedConversationId = id;
+  markConversationRead(id);
+  saveState();
+  render();
+  navigateTo("inbox");
+});
+
+elements.agentDemoData.addEventListener("click", () => {
+  const task = state.agent.task;
+  if (!task || task.status === "draft") {
+    addLog("请先解析并确认任务卡片，再体验演示数据");
+    return;
+  }
+  const generated = generateProspects(state.campaign, 16);
+  const seen = new Set(state.prospects.map((p) => p.website || p.company.toLowerCase()));
+  const fresh = generated.filter((p) => {
+    const key = p.website || p.company.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  state.prospects = [...fresh, ...state.prospects];
+  agentOnProspectsImported(fresh);
+  addLog(`演示采集：注入 ${fresh.length} 家模拟企业（真实使用请通过搜索导入或采集 Webhook）`);
+  saveState();
+  render();
+});
+
+elements.agentReset.addEventListener("click", () => {
+  if (!state.agent.task) return;
+  state.agent.task = null;
+  state.agent.approvals = [];
+  addLog("Agent 任务已结束（已导入的线索与会话全部保留）");
+  saveState();
+  render();
+});
 
 [elements.aiLocalMode, elements.aiClaudeMode].forEach((button) => {
   button.addEventListener("click", () => {

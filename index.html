@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>自动化外贸开发系统</title>
-    <link rel="stylesheet" href="./styles.css?v=9" />
+    <link rel="stylesheet" href="./styles.css?v=10" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
@@ -94,6 +94,14 @@
         <path d="m6 6 12 12" />
         <path d="M18 6 6 18" />
       </symbol>
+      <symbol id="icon-robot" viewBox="0 0 24 24">
+        <rect x="5" y="8" width="14" height="11" rx="2" />
+        <path d="M12 8V4" />
+        <circle cx="12" cy="3" r="1" />
+        <path d="M9 13h.01M15 13h.01" />
+        <path d="M9.5 16.5h5" />
+        <path d="M3 12v3M21 12v3" />
+      </symbol>
     </svg>
 
     <div class="app-shell">
@@ -109,6 +117,10 @@
           <button class="nav-tab is-active" data-view="dashboard" type="button">
             <svg><use href="#icon-rocket" /></svg>
             <span>控制台</span>
+          </button>
+          <button class="nav-tab" data-view="agent" type="button">
+            <svg><use href="#icon-robot" /></svg>
+            <span>AI Agent</span>
           </button>
           <p class="nav-group-label">① 获客</p>
           <button class="nav-tab" data-view="discovery" type="button">
@@ -282,6 +294,93 @@
               <div class="mini-prospect-list" id="topProspects"></div>
             </section>
           </div>
+        </section>
+
+        <section class="view" id="agentView" aria-labelledby="agentTitle">
+          <div class="section-header">
+            <div>
+              <p class="eyebrow">Autonomous prospecting agent</p>
+              <h2 id="agentTitle">AI 自动获客 Agent</h2>
+            </div>
+            <div class="topbar-actions">
+              <button class="ghost-button" id="agentDemoData" type="button" title="生成一批演示线索走完整流程">
+                <svg><use href="#icon-play" /></svg>
+                <span>用演示数据体验</span>
+              </button>
+              <button class="ghost-button" id="agentReset" type="button">
+                <svg><use href="#icon-x" /></svg>
+                <span>结束任务</span>
+              </button>
+            </div>
+          </div>
+
+          <section class="panel" id="agentPromptPanel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Step 1 · 下达任务</p>
+                <h2>用一句话描述你要开发的客户</h2>
+              </div>
+              <span class="status-pill" id="agentEngineTag">本地解析</span>
+            </div>
+            <label>
+              <span>市场、行业、客户类型、规模、触达策略——想到什么写什么</span>
+              <textarea id="agentPromptInput" rows="3" placeholder="帮我找美国和加拿大做户外家具批发的进口商，规模 20 人以上，自动发开发信和 WhatsApp，有询盘意向的推给我。"></textarea>
+            </label>
+            <div class="button-row">
+              <button class="primary-button" id="agentParse" type="button">
+                <svg><use href="#icon-zap" /></svg>
+                <span>解析任务</span>
+              </button>
+            </div>
+          </section>
+
+          <section class="panel" id="agentTaskCard" hidden></section>
+
+          <div class="agent-grid">
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Pipeline</p>
+                  <h2>五步闭环进度</h2>
+                </div>
+              </div>
+              <div class="workflow" id="agentSteps"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Filter funnel</p>
+                  <h2>过滤漏斗</h2>
+                </div>
+              </div>
+              <div class="funnel" id="agentFunnel"></div>
+              <p class="connector-hint" id="agentFunnelHint"></p>
+            </section>
+          </div>
+
+          <section class="panel" id="agentApprovalPanel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Step 3 · 触达审批</p>
+                <h2>待审批触达方案</h2>
+              </div>
+              <button class="primary-button" id="agentApproveAll" type="button">
+                <svg><use href="#icon-check" /></svg>
+                <span>全部通过并发送</span>
+              </button>
+            </div>
+            <div class="agent-approval-list" id="agentApprovalList"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Step 5 · 意向移交</p>
+                <h2>意向分级</h2>
+              </div>
+            </div>
+            <div class="agent-handoff" id="agentHandoff"></div>
+          </section>
         </section>
 
         <section class="view" id="discoveryView" aria-labelledby="discoveryTitle">
@@ -972,11 +1071,11 @@
 
     <div class="toast-stack" id="toastStack" aria-live="polite"></div>
 
-    <script src="./app.js?v=9" defer></script>
+    <script src="./app.js?v=10" defer></script>
     <script>
       // 缓存哨兵：若浏览器仍加载旧版 app.js（版本不匹配或加载失败导致按钮失灵），给出明确提示
       window.addEventListener("load", () => {
-        if (window.__APP_V !== "9") {
+        if (window.__APP_V !== "10") {
           const tip = document.createElement("div");
           tip.style.cssText =
             "position:fixed;top:0;left:0;right:0;z-index:9999;padding:12px 16px;background:#c2410c;color:#fff;font-size:14px;text-align:center;font-weight:700;";

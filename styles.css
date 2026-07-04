@@ -2382,6 +2382,112 @@ button.management-row.is-selected {
   resize: vertical;
 }
 
+/* ---------- AI 自动获客 Agent ---------- */
+.agent-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  margin-bottom: 16px;
+}
+
+#agentPromptPanel textarea {
+  font-size: 15px;
+}
+
+.agent-mode-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 4px 0 10px;
+}
+
+.agent-channels {
+  display: flex;
+  gap: 16px;
+}
+
+.agent-approval-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+.agent-approval-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fffefa;
+}
+
+.approval-why {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.approval-previews {
+  display: grid;
+  gap: 8px;
+}
+
+.approval-preview {
+  padding: 10px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-soft);
+  font-size: 12px;
+}
+
+.approval-preview strong {
+  display: block;
+  margin: 4px 0 2px;
+  font-size: 13px;
+}
+
+.approval-preview p {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.agent-handoff {
+  display: grid;
+  gap: 16px;
+}
+
+.handoff-tier > .eyebrow {
+  margin-bottom: 8px;
+}
+
+.agent-hot-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid #f0c8b4;
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, #fdf1ea, #fffefa);
+  margin-bottom: 10px;
+}
+
+body.dark .agent-approval-card {
+  background: var(--surface-soft);
+  border-color: var(--line);
+}
+
+body.dark .agent-hot-card {
+  background: linear-gradient(180deg, rgba(251, 146, 60, 0.12), var(--surface));
+  border-color: rgba(251, 146, 60, 0.35);
+}
+
+@media (max-width: 1080px) {
+  .agent-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ---------- 深色模式 ---------- */
 body.dark {
   --bg: #11181b;

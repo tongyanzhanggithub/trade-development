@@ -1,4 +1,4 @@
-window.__APP_V = "27";
+window.__APP_V = "28";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -466,6 +466,7 @@ function applyCampaignPreset(key) {
   elements.valuePropsInput.value = preset.valueProps;
   elements.certificationsInput.value = preset.certifications;
   readCampaignFromForm();
+  state.campaign.presetKey = key; // 记住品类，开发信序列会套用该品类的专门话术
   addLog(`已套用重庆品类模板「${preset.label}」——可直接点「一键起量」联网找海外买家（署名/公司名记得填你自己的）`);
   saveState();
   render();
@@ -2997,6 +2998,124 @@ function verifyProspectList(prospects) {
   }));
 }
 
+// 重庆四大品类的专门开发信话术（套用品类模板后，首封+价值跟进自动换成该品类版本）
+const CQ_EMAIL_TEMPLATES = {
+  moto: {
+    firstSubject: "Chongqing motorcycle parts — OEM-grade, mixed container OK",
+    first: (g, p, sender, company) => `Hi ${g},
+
+I saw ${p.company} may distribute motorcycle spare parts in ${p.market}. We export from Chongqing, working with the Loncin/Zongshen/Lifan supply chain.
+
+We cover the fast-moving models your market likely sells — CG125/150, GN125, CB, Bajaj/TVS-compatible, and tricycle/3-wheeler engine parts — with OEM-grade quality and steady stock.
+
+What buyers here usually like:
+- Low MOQ to start; we mix many item numbers in one 20'/40' container
+- CCC / SONCAP / ISO 9001 and full export documents
+- Repeat-order consistency and stable FOB Chongqing pricing
+
+Would a fast-moving-parts catalog with a reference price list be useful?
+
+Best regards,
+${sender}
+${company}`,
+    valueSubject: "A starter container mix for motorcycle parts",
+    value: (g, p, sender) => `Hi ${g},
+
+Following up on the motorcycle parts note.
+
+If it helps, I can put together a starter mix for ${p.market}: the top fast-moving SKUs (engine, electrical, tyres, chains, brakes) in one container, so you test demand without tying up cash.
+
+Share the models/brands you sell most and I'll send a matched quotation.
+
+Best regards,
+${sender}`
+  },
+  auto: {
+    firstSubject: "Chongqing auto parts — aftermarket coverage, flexible MOQ",
+    first: (g, p, sender, company) => `Hi ${g},
+
+I noticed ${p.company} may source automotive aftermarket parts in ${p.market}. We export from Chongqing (Changan supply-chain base) and cover fast-moving service parts: filters, brake pads, suspension, lighting and more.
+
+What buyers usually value:
+- Wide aftermarket coverage across common makes/models
+- IATF 16949 / E-mark / ISO 9001, stable QC and batch consistency
+- Flexible MOQ and fast sampling; mixed-item containers
+
+Happy to send a catalog with our best-selling references and a price range. Which vehicle makes are strongest in your market?
+
+Best regards,
+${sender}
+${company}`,
+    valueSubject: "Best-selling references for your market",
+    value: (g, p, sender) => `Hi ${g},
+
+Quick follow-up on auto parts.
+
+I can prepare a starter list of the highest-demand references (filters/brakes/suspension) for ${p.market} in one mixed container, with an OE cross-reference so your counter staff can match quickly.
+
+Tell me the top vehicle models you serve and I'll tailor the quotation.
+
+Best regards,
+${sender}`
+  },
+  electronics: {
+    firstSubject: "Chongqing electronics/IT — ODM/OEM, CE·FCC ready",
+    first: (g, p, sender, company) => `Hi ${g},
+
+I saw ${p.company} may buy consumer electronics / IT accessories in ${p.market}. We work with Chongqing's electronics manufacturing base — one of the world's largest laptop production clusters — and can supply laptops, peripherals, adapters and accessories.
+
+Points buyers here care about:
+- ODM/OEM capacity for your own brand/logo
+- CE / FCC / RoHS ready, reliable lead time
+- Stable supply from an established manufacturing hub
+
+Would a product list with specs and a reference price range be useful? I can also share ODM options if you carry a private label.
+
+Best regards,
+${sender}
+${company}`,
+    valueSubject: "ODM options and best-moving SKUs",
+    value: (g, p, sender) => `Hi ${g},
+
+Following up on the electronics note.
+
+If you carry a private label, I can send our ODM options (MOQ, customization, packaging) plus CE/FCC docs. If you resell, I'll send the best-moving SKUs with a clean price list.
+
+What categories are you focused on this season?
+
+Best regards,
+${sender}`
+  },
+  machinery: {
+    firstSubject: "Chongqing machinery & equipment — project-grade, after-sales",
+    first: (g, p, sender, company) => `Hi ${g},
+
+I noticed ${p.company} may source machinery or industrial equipment for projects in ${p.market}. We export from Chongqing's equipment manufacturing cluster with project-grade reliability.
+
+What project buyers usually need:
+- Spec-matched equipment with spare parts and after-sales support
+- CE / ISO 9001 and full export documents, proper export crating
+- Guidance on installation and commissioning
+
+If you share the equipment type and capacity you need, I can send matching models with a reference quotation.
+
+Best regards,
+${sender}
+${company}`,
+    valueSubject: "Spec sheet, spares and after-sales terms",
+    value: (g, p, sender) => `Hi ${g},
+
+Quick follow-up on the equipment note.
+
+For projects, I can prepare a spec sheet, spare-parts list and after-sales terms up front, so your bid/evaluation is easy.
+
+Tell me the equipment type, capacity and timeline, and I'll tailor a quotation.
+
+Best regards,
+${sender}`
+  }
+};
+
 function buildEmailSequence(campaign, prospect) {
   if (!prospect) return [];
 
@@ -3006,14 +3125,17 @@ function buildEmailSequence(campaign, prospect) {
   const sender = campaign.senderName;
   const company = campaign.companyName;
   const greeting = prospect.contactName && prospect.contactName !== "待补全" ? prospect.contactName.split(" ")[0] : "there";
+  const tpl = CQ_EMAIL_TEMPLATES[campaign.presetKey];
 
   return [
     {
       id: makeId("email"),
       label: "首封开发信",
       dayOffset: 0,
-      subject: `Supplier option for ${product}`,
-      body: `Hi ${greeting},
+      subject: tpl ? tpl.firstSubject : `Supplier option for ${product}`,
+      body: tpl
+        ? tpl.first(greeting, prospect, sender, company)
+        : `Hi ${greeting},
 
 I noticed ${prospect.company} may work with ${product} in ${prospect.market}.
 
@@ -3029,8 +3151,10 @@ ${company}`
       id: makeId("email"),
       label: "价值跟进",
       dayOffset: 3,
-      subject: `Quick follow-up on ${product}`,
-      body: `Hi ${greeting},
+      subject: tpl ? tpl.valueSubject : `Quick follow-up on ${product}`,
+      body: tpl
+        ? tpl.value(greeting, prospect, sender, company)
+        : `Hi ${greeting},
 
 Just following up on my previous note.
 

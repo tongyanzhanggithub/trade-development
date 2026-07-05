@@ -19,6 +19,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 680,
     title: "重庆外贸自动获客系统",
+    icon: path.join(__dirname, "icon.ico"),
     backgroundColor: "#f4f5f2",
     autoHideMenuBar: false,
     webPreferences: {

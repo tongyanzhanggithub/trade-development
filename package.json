@@ -24,10 +24,13 @@
       "main.js",
       "index.html",
       "app.js",
-      "styles.css"
+      "styles.css",
+      "icon.ico",
+      "favicon.png"
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -35,7 +38,9 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "重庆外贸自动获客"
+      "shortcutName": "重庆外贸自动获客",
+      "installerIcon": "icon.ico",
+      "uninstallerIcon": "icon.ico"
     }
   }
 }

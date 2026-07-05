@@ -1,4 +1,4 @@
-window.__APP_V = "32";
+window.__APP_V = "33";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -19,6 +19,9 @@ const elements = {
   campaignStatus: $("#campaignStatus"),
   generatePlan: $("#generatePlan"),
   cqPresets: $("#cqPresets"),
+  focusProductInput: $("#focusProductInput"),
+  refineFocus: $("#refineFocus"),
+  focusHint: $("#focusHint"),
   oneClickPipeline: $("#oneClickPipeline"),
   resetDemo: $("#resetDemo"),
   runAutomationTop: $("#runAutomationTop"),
@@ -461,13 +464,112 @@ function applyCampaignPreset(key) {
   elements.certificationsInput.value = preset.certifications;
   readCampaignFromForm();
   state.campaign.presetKey = key; // 记住品类，开发信序列会套用该品类的专门话术
-  addLog(`已套用重庆品类模板「${preset.label}」——可直接点「一键起量」联网找海外买家（署名/公司名记得填你自己的）`);
+  addLog(`已套用重庆品类模板「${preset.label}」——在下方填你的具体产品点「AI 细化定位」更准，或直接「一键起量」`);
   saveState();
   render();
 }
 
+/* ---------- 具体产品聚焦：把"泛品类"细化成一个具体零件/小设备的精准定位 ---------- */
+
+const AI_FOCUS_SCHEMA = {
+  type: "object",
+  properties: {
+    english_term: { type: "string", description: "该具体产品最标准的英文行业叫法（买家搜索时会用的词）" },
+    synonyms: {
+      type: "array",
+      items: { type: "string" },
+      description: "2-4 个英文同义词/行业别称/常见拼法（不含 english_term 本身）"
+    },
+    hs_code: { type: "string", description: "最可能的 HS 编码（6 位即可），不确定给最接近的" },
+    buyer_types: { type: "string", description: "一句中文：这个具体产品真实的海外买家是谁（如：摩托车修配店供货商、砖厂设备经销商）" },
+    keywords: { type: "array", items: { type: "string" }, description: "3-5 个用于搜索该产品买家的英文关键词" },
+    value_props_addon: { type: "string", description: "一句英文：针对这个具体产品的补充卖点（材质/精度/兼容机型/产能等）" }
+  },
+  required: ["english_term", "synonyms", "hs_code", "buyer_types", "keywords", "value_props_addon"]
+};
+
+function renderFocusHint() {
+  if (!elements.focusHint) return;
+  const c = state.campaign;
+  if (c.productTerms?.length > 1) {
+    elements.focusHint.innerHTML = `已聚焦：<strong>${escapeHtml(c.product)}</strong> · 同义词 ${c.productTerms
+      .slice(1)
+      .map((t) => `<code>${escapeHtml(t)}</code>`)
+      .join(" ")}${c.hsCode ? ` · HS <code>${escapeHtml(c.hsCode)}</code>` : ""}${
+      c.buyerHint ? `<br />目标买家：${escapeHtml(c.buyerHint)}` : ""
+    }`;
+  } else if (c.focusProduct) {
+    elements.focusHint.textContent = `已按原文聚焦「${c.focusProduct}」——配置 Claude 后点「AI 细化定位」可自动翻译成行业术语并扩展同义词`;
+  } else {
+    elements.focusHint.textContent = "";
+  }
+}
+
+async function refineProductFocus() {
+  readCampaignFromForm();
+  const raw = (state.campaign.focusProduct || "").trim();
+  if (!raw) {
+    addLog("请先在「具体产品聚焦」里输入你要卖的具体零件或设备（可中文）");
+    return;
+  }
+  if (!aiEnabled()) {
+    // 无 Claude：按原文聚焦，至少让搜索式围绕这个词
+    state.campaign.productTerms = [raw];
+    state.campaign.product = raw;
+    bindCampaignForm();
+    state.searchPlan = generateSearchPlan(state.campaign);
+    addLog(`已按原文聚焦「${raw}」（未配置 Claude，无法翻译/扩展同义词；建议到设置配置 AI 引擎）`);
+    saveState();
+    render();
+    return;
+  }
+  addLog(`Claude 正在细化定位「${raw}」…`);
+  renderLogs();
+  try {
+    const system =
+      "你是外贸产品定位专家。用户给出一个具体产品（可能是中文的某个零件或小设备），你要产出：标准英文行业叫法、同义词/别称、HS 编码、这个产品真实的海外买家画像、搜索买家用的关键词、针对性补充卖点。要具体到这个产品，不要泛品类。";
+    const user = `具体产品: ${raw}
+所属大类: ${CQ_PRESETS[state.campaign.presetKey]?.label || state.campaign.product}
+目标市场: ${state.campaign.markets}`;
+    const data = await callClaude(system, user, AI_FOCUS_SCHEMA, 800);
+    const terms = [data.english_term, ...(data.synonyms || [])].filter(Boolean);
+    state.campaign.product = data.english_term;
+    state.campaign.productTerms = terms;
+    state.campaign.hsCode = data.hs_code || "";
+    state.campaign.buyerHint = data.buyer_types || "";
+    // 补充卖点：追加不覆盖（品类卖点仍保留）
+    if (data.value_props_addon && !state.campaign.valueProps.includes(data.value_props_addon)) {
+      state.campaign.valueProps = `${state.campaign.valueProps}; ${data.value_props_addon}`;
+    }
+    // Agent 关键词：给周期任务/联网搜索用
+    if (state.agent?.task?.parsed) {
+      state.agent.task.parsed.keywords = [...new Set([...(data.keywords || []), ...(state.agent.task.parsed.keywords || [])])];
+    }
+    bindCampaignForm();
+    state.searchPlan = generateSearchPlan(state.campaign);
+    addLog(
+      `细化完成：「${raw}」→ ${data.english_term}（同义词 ${terms.length - 1} 个 · HS ${data.hs_code}）· 买家：${data.buyer_types}。搜索式已重建，可直接「一键起量」`
+    );
+    saveState();
+    render();
+  } catch (error) {
+    addLog(`AI 细化定位失败：${error.message}`);
+    saveState();
+    render();
+  }
+}
+
+// 搜索式里的产品表达：有同义词组时用 ("a" OR "b" OR "c")，否则用 "product"
+function productSearchExpr(campaign) {
+  const terms = (campaign.productTerms || []).filter(Boolean).slice(0, 3);
+  if (terms.length > 1) return `(${terms.map((t) => `"${t}"`).join(" OR ")})`;
+  return `"${(terms[0] || campaign.product).trim()}"`;
+}
+
 function bindCampaignForm() {
   const campaign = state.campaign;
+  if (elements.focusProductInput) elements.focusProductInput.value = campaign.focusProduct || "";
+  renderFocusHint();
   elements.productInput.value = campaign.product;
   elements.marketsInput.value = campaign.markets;
   elements.customerTypeInput.value = campaign.customerType;
@@ -520,6 +622,12 @@ function readInboxRulesFromForm() {
 }
 
 function readCampaignFromForm() {
+  // 具体产品聚焦：手动改了聚焦文本（没点 AI 细化）时，同义词组退回为该文本本身
+  const focusText = elements.focusProductInput ? elements.focusProductInput.value.trim() : state.campaign.focusProduct || "";
+  if (focusText !== (state.campaign.focusProduct || "")) {
+    state.campaign.focusProduct = focusText;
+    state.campaign.productTerms = focusText ? [focusText] : [];
+  }
   state.campaign = {
     ...state.campaign,
     product: elements.productInput.value.trim() || "your product",
@@ -2512,6 +2620,10 @@ function refreshManagementDerivedData() {
     activeCampaign.companyName = state.campaign.companyName;
     activeCampaign.dailyLimit = state.campaign.dailyLimit;
     activeCampaign.presetKey = state.campaign.presetKey || null;
+    activeCampaign.focusProduct = state.campaign.focusProduct || "";
+    activeCampaign.productTerms = state.campaign.productTerms || [];
+    activeCampaign.hsCode = state.campaign.hsCode || "";
+    activeCampaign.buyerHint = state.campaign.buyerHint || "";
   }
 }
 
@@ -2683,6 +2795,7 @@ function renderAccountManager() {
 
 function generateSearchPlan(campaign) {
   const product = campaign.product.trim();
+  const productExpr = productSearchExpr(campaign); // 聚焦具体产品时是 ("a" OR "b") 同义词组
   const markets = normalizeMarkets(campaign.markets);
   const intent = buildCustomerSearchTerms(campaign.customerType);
   const exclusions = "-alibaba -amazon -made-in-china -globalsources -temu -shein";
@@ -2692,56 +2805,56 @@ function generateSearchPlan(campaign) {
       intent: "找真实进口商/分销商官网",
       priority: "P1",
       nextAction: "打开官网，找 About/Brands/Contact/Wholesale 页面",
-      build: (market) => `"${product}" (${intent.buyers}) "${market}" "contact" ${exclusions}`
+      build: (market) => `${productExpr} (${intent.buyers}) "${market}" "contact" ${exclusions}`
     },
     {
       channel: "Google",
       intent: "找批发目录和经销商列表",
       priority: "P1",
       nextAction: "把目录里的公司官网粘贴到导入框",
-      build: (market) => `"${product}" "${market}" ("distributor list" OR "wholesale directory" OR "stockist") ${exclusions}`
+      build: (market) => `${productExpr} "${market}" ("distributor list" OR "wholesale directory" OR "stockist") ${exclusions}`
     },
     {
       channel: "Google",
       intent: "找采购/品类负责人",
       priority: "P1",
       nextAction: "记录公司名、负责人职位、邮箱或 LinkedIn",
-      build: (market) => `"${product}" "${market}" ("sourcing manager" OR "buyer" OR "category manager" OR "procurement") ${exclusions}`
+      build: (market) => `${productExpr} "${market}" ("sourcing manager" OR "buyer" OR "category manager" OR "procurement") ${exclusions}`
     },
     {
       channel: "LinkedIn",
       intent: "找公司主页和采购角色",
       priority: "P2",
       nextAction: "复制公司页 URL 或公司官网",
-      build: (market) => `site:linkedin.com/company "${product}" "${market}" (${intent.buyers})`
+      build: (market) => `site:linkedin.com/company ${productExpr} "${market}" (${intent.buyers})`
     },
     {
       channel: "Retail",
       intent: "找零售商/品牌商采购入口",
       priority: "P2",
       nextAction: "找 vendor/supplier application 页面",
-      build: (market) => `"${product}" "${market}" ("vendor application" OR "supplier application" OR "become a supplier") ${exclusions}`
+      build: (market) => `${productExpr} "${market}" ("vendor application" OR "supplier application" OR "become a supplier") ${exclusions}`
     },
     {
       channel: "Association",
       intent: "找协会会员名录",
       priority: "P2",
       nextAction: "导入会员公司名录",
-      build: (market) => `"${product}" "${market}" ("member directory" OR "association members" OR "trade association")`
+      build: (market) => `${productExpr} "${market}" ("member directory" OR "association members" OR "trade association")`
     },
     {
       channel: "Customs Data",
       intent: "找有进口记录的买家线索",
       priority: "P3",
       nextAction: "用海关数据服务核验真实进口商",
-      build: (market) => `"${product}" "${market}" ("importer" OR "bill of lading" OR "import data") ${exclusions}`
+      build: (market) => `${productExpr} "${market}" ("importer" OR "bill of lading" OR "import data") ${exclusions}`
     },
     {
       channel: "Competitor",
       intent: "找竞品渠道和经销商",
       priority: "P3",
       nextAction: "从竞品 Where to buy/Dealer 页面反查客户",
-      build: (market) => `"${product}" "${market}" ("where to buy" OR "dealer locator" OR "authorized distributor") ${exclusions}`
+      build: (market) => `${productExpr} "${market}" ("where to buy" OR "dealer locator" OR "authorized distributor") ${exclusions}`
     }
   ];
 
@@ -3062,11 +3175,12 @@ function localIntroFor(market, greeting, product) {
 const CQ_EMAIL_TEMPLATES = {
   moto: {
     firstSubject: "Chongqing motorcycle parts — OEM-grade, mixed container OK",
-    first: (g, p, sender, company) => `Hi ${g},
+    hook: "OEM-grade, mixed container OK",
+    first: (g, p, sender, company, product) => `Hi ${g},
 
-I saw ${p.company} may distribute motorcycle spare parts in ${p.market}. We export from Chongqing, working with the Loncin/Zongshen/Lifan supply chain.
+I saw ${p.company} may deal in ${product} in ${p.market}. We export from Chongqing, working with the Loncin/Zongshen/Lifan supply chain.
 
-We cover the fast-moving models your market likely sells — CG125/150, GN125, CB, Bajaj/TVS-compatible, and tricycle/3-wheeler engine parts — with OEM-grade quality and steady stock.
+We supply ${product} for the fast-moving models your market likely sells — CG125/150, GN125, CB, Bajaj/TVS-compatible, and tricycle/3-wheeler platforms — with OEM-grade quality and steady stock.
 
 What buyers here usually like:
 - Low MOQ to start; we mix many item numbers in one 20'/40' container
@@ -3079,11 +3193,11 @@ Best regards,
 ${sender}
 ${company}`,
     valueSubject: "A starter container mix for motorcycle parts",
-    value: (g, p, sender) => `Hi ${g},
+    value: (g, p, sender, company, product) => `Hi ${g},
 
-Following up on the motorcycle parts note.
+Following up on my note about ${product}.
 
-If it helps, I can put together a starter mix for ${p.market}: the top fast-moving SKUs (engine, electrical, tyres, chains, brakes) in one container, so you test demand without tying up cash.
+If it helps, I can put together a starter mix for ${p.market}: the top fast-moving SKUs of ${product} in one container, so you test demand without tying up cash.
 
 Share the models/brands you sell most and I'll send a matched quotation.
 
@@ -3092,9 +3206,10 @@ ${sender}`
   },
   auto: {
     firstSubject: "Chongqing auto parts — aftermarket coverage, flexible MOQ",
-    first: (g, p, sender, company) => `Hi ${g},
+    hook: "aftermarket coverage, flexible MOQ",
+    first: (g, p, sender, company, product) => `Hi ${g},
 
-I noticed ${p.company} may source automotive aftermarket parts in ${p.market}. We export from Chongqing (Changan supply-chain base) and cover fast-moving service parts: filters, brake pads, suspension, lighting and more.
+I noticed ${p.company} may source ${product} in ${p.market}. We export from Chongqing (Changan supply-chain base) with OE cross-references and stable batch quality.
 
 What buyers usually value:
 - Wide aftermarket coverage across common makes/models
@@ -3107,11 +3222,11 @@ Best regards,
 ${sender}
 ${company}`,
     valueSubject: "Best-selling references for your market",
-    value: (g, p, sender) => `Hi ${g},
+    value: (g, p, sender, company, product) => `Hi ${g},
 
-Quick follow-up on auto parts.
+Quick follow-up on ${product}.
 
-I can prepare a starter list of the highest-demand references (filters/brakes/suspension) for ${p.market} in one mixed container, with an OE cross-reference so your counter staff can match quickly.
+I can prepare a starter list of the highest-demand references of ${product} for ${p.market} in one mixed container, with an OE cross-reference so your counter staff can match quickly.
 
 Tell me the top vehicle models you serve and I'll tailor the quotation.
 
@@ -3120,9 +3235,10 @@ ${sender}`
   },
   electronics: {
     firstSubject: "Chongqing electronics/IT — ODM/OEM, CE·FCC ready",
-    first: (g, p, sender, company) => `Hi ${g},
+    hook: "ODM/OEM, CE·FCC ready",
+    first: (g, p, sender, company, product) => `Hi ${g},
 
-I saw ${p.company} may buy consumer electronics / IT accessories in ${p.market}. We work with Chongqing's electronics manufacturing base — one of the world's largest laptop production clusters — and can supply laptops, peripherals, adapters and accessories.
+I saw ${p.company} may buy ${product} in ${p.market}. We work with Chongqing's electronics manufacturing base — one of the world's largest laptop production clusters.
 
 Points buyers here care about:
 - ODM/OEM capacity for your own brand/logo
@@ -3135,11 +3251,11 @@ Best regards,
 ${sender}
 ${company}`,
     valueSubject: "ODM options and best-moving SKUs",
-    value: (g, p, sender) => `Hi ${g},
+    value: (g, p, sender, company, product) => `Hi ${g},
 
-Following up on the electronics note.
+Following up on my note about ${product}.
 
-If you carry a private label, I can send our ODM options (MOQ, customization, packaging) plus CE/FCC docs. If you resell, I'll send the best-moving SKUs with a clean price list.
+If you carry a private label, I can send our ODM options for ${product} (MOQ, customization, packaging) plus CE/FCC docs. If you resell, I'll send the best-moving SKUs with a clean price list.
 
 What categories are you focused on this season?
 
@@ -3148,9 +3264,10 @@ ${sender}`
   },
   machinery: {
     firstSubject: "Chongqing machinery & equipment — project-grade, after-sales",
-    first: (g, p, sender, company) => `Hi ${g},
+    hook: "project-grade, spares & after-sales",
+    first: (g, p, sender, company, product) => `Hi ${g},
 
-I noticed ${p.company} may source machinery or industrial equipment for projects in ${p.market}. We export from Chongqing's equipment manufacturing cluster with project-grade reliability.
+I noticed ${p.company} may source ${product} for projects in ${p.market}. We export from Chongqing's equipment manufacturing cluster with project-grade reliability.
 
 What project buyers usually need:
 - Spec-matched equipment with spare parts and after-sales support
@@ -3163,13 +3280,13 @@ Best regards,
 ${sender}
 ${company}`,
     valueSubject: "Spec sheet, spares and after-sales terms",
-    value: (g, p, sender) => `Hi ${g},
+    value: (g, p, sender, company, product) => `Hi ${g},
 
-Quick follow-up on the equipment note.
+Quick follow-up on ${product}.
 
-For projects, I can prepare a spec sheet, spare-parts list and after-sales terms up front, so your bid/evaluation is easy.
+For projects, I can prepare a spec sheet, spare-parts list and after-sales terms for ${product} up front, so your bid/evaluation is easy.
 
-Tell me the equipment type, capacity and timeline, and I'll tailor a quotation.
+Tell me the capacity and timeline you need, and I'll tailor a quotation.
 
 Best regards,
 ${sender}`
@@ -3190,15 +3307,22 @@ function buildEmailSequence(campaign, prospect) {
   // 非英语市场：首封加当地语言开场（西/葡/阿/法），提高打开后的信任度与回复率
   const localIntro = localIntroFor(prospect.market, greeting, product);
   const withIntro = (body) => (localIntro ? `${localIntro}\n\n---\n\n${body}` : body);
+  // 聚焦具体产品时（点过 AI 细化或填了聚焦），主题直接点名该产品，比泛品类主题打开率更高
+  const focused = (campaign.productTerms || []).length > 0;
+  const firstSubject = tpl
+    ? focused
+      ? `${product} from Chongqing — ${tpl.hook || "factory supplier"}`
+      : tpl.firstSubject
+    : `Supplier option for ${product}`;
 
   return [
     {
       id: makeId("email"),
       label: "首封开发信",
       dayOffset: 0,
-      subject: tpl ? tpl.firstSubject : `Supplier option for ${product}`,
+      subject: firstSubject,
       body: withIntro(tpl
-        ? tpl.first(greeting, prospect, sender, company)
+        ? tpl.first(greeting, prospect, sender, company, product)
         : `Hi ${greeting},
 
 I noticed ${prospect.company} may work with ${product} in ${prospect.market}.
@@ -3215,9 +3339,9 @@ ${company}`)
       id: makeId("email"),
       label: "价值跟进",
       dayOffset: 3,
-      subject: tpl ? tpl.valueSubject : `Quick follow-up on ${product}`,
+      subject: tpl && !focused ? tpl.valueSubject : `Quick follow-up on ${product}`,
       body: tpl
-        ? tpl.value(greeting, prospect, sender, company)
+        ? tpl.value(greeting, prospect, sender, company, product)
         : `Hi ${greeting},
 
 Just following up on my previous note.
@@ -4493,12 +4617,17 @@ async function webSearchProspects(opts = {}) {
   const markets = normalizeMarkets(state.campaign.markets);
   const system =
     "你是外贸找客助手，可联网搜索。任务：找出真实存在的目标采购商/进口商/批发商公司。用网络搜索核实公司真实存在并尽量拿到官网域名。只输出一个 JSON 数组，不要额外文字，每个元素含 {company, website, market, note}（note 为一句中文：为什么疑似目标客户/采购信号）。website 只要主域名。排除 alibaba/amazon/made-in-china 等平台与目录站本身。";
+  const focusTerms = (state.campaign.productTerms || []).filter(Boolean);
+  const focusLine =
+    focusTerms.length > 1
+      ? `\n【聚焦具体产品】只找采购/进口/分销这个具体产品的公司，不要泛品类公司。同义词/行业叫法: ${focusTerms.join(", ")}${state.campaign.hsCode ? `（HS ${state.campaign.hsCode}）` : ""}${state.campaign.buyerHint ? `\n典型买家: ${state.campaign.buyerHint}` : ""}`
+      : "";
   const user = seed
-    ? `请找 ${count} 家与下面这个客户相似的公司（同市场、同品类、相近规模）：\n${seed}\n我方产品: ${state.campaign.product}`
+    ? `请找 ${count} 家与下面这个客户相似的公司（同市场、同品类、相近规模）：\n${seed}\n我方产品: ${state.campaign.product}${focusLine}`
     : `目标市场: ${markets.join(", ")}
 客户类型: ${state.campaign.customerType}
 产品/品类: ${state.campaign.product}
-搜索关键词: ${state.agent?.task?.parsed?.keywords?.join(", ") || state.campaign.product}
+搜索关键词: ${state.agent?.task?.parsed?.keywords?.join(", ") || state.campaign.product}${focusLine}
 请找 ${count} 家真实公司。`;
 
   try {
@@ -6332,6 +6461,10 @@ function campaignFromCurrentConfig(existing) {
     companyName: state.campaign.companyName,
     dailyLimit: state.campaign.dailyLimit,
     presetKey: state.campaign.presetKey || null,
+    focusProduct: state.campaign.focusProduct || "",
+    productTerms: state.campaign.productTerms || [],
+    hsCode: state.campaign.hsCode || "",
+    buyerHint: state.campaign.buyerHint || "",
     createdAt: existing?.createdAt || dateOffset(0)
   };
 }
@@ -6373,7 +6506,11 @@ function activateManagedCampaign(id) {
     senderName: c.owner ?? state.campaign.senderName,
     companyName: c.companyName ?? state.campaign.companyName,
     dailyLimit: c.dailyLimit || state.campaign.dailyLimit,
-    presetKey: c.presetKey || null
+    presetKey: c.presetKey || null,
+    focusProduct: c.focusProduct || "",
+    productTerms: c.productTerms || [],
+    hsCode: c.hsCode || "",
+    buyerHint: c.buyerHint || ""
   };
   bindCampaignForm();
   addLog(`已切换到活动「${c.name}」，整套配置已恢复到控制台`);
@@ -6670,6 +6807,12 @@ if (elements.cqPresets) {
   elements.cqPresets.addEventListener("click", (event) => {
     const key = event.target.closest("[data-preset]")?.dataset.preset;
     if (key) applyCampaignPreset(key);
+  });
+}
+
+if (elements.refineFocus) {
+  elements.refineFocus.addEventListener("click", () => {
+    runAsyncButton(elements.refineFocus, "细化中…", () => refineProductFocus());
   });
 }
 

@@ -1,4 +1,4 @@
-window.__APP_V = "33";
+window.__APP_V = "34";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -5009,6 +5009,17 @@ function confirmAgentTask() {
     customerType: parsed.customer_type,
     dailyLimit: parsed.daily_limit
   };
+
+  // 自动做具体产品聚焦：把任务里的产品细化成行业术语+同义词+HS+买家画像，
+  // 后续搜索式/联网找客户/周期补量/开发信全部围绕这个具体产品（异步，不阻塞任务启动）
+  const isBroadPreset = Object.values(CQ_PRESETS).some((p) => p.product === parsed.product);
+  if (aiEnabled() && parsed.product && !isBroadPreset && parsed.product !== state.campaign.focusProduct) {
+    state.campaign.focusProduct = parsed.product;
+    state.campaign.productTerms = [parsed.product];
+    if (elements.focusProductInput) elements.focusProductInput.value = parsed.product;
+    refineProductFocus(); // 完成后会自动重建搜索式并提示细化结果
+  }
+
   bindCampaignForm();
   state.searchPlan = generateSearchPlan(state.campaign);
   task.status = "prospecting";
@@ -5830,6 +5841,14 @@ async function runOneClickPipeline() {
     const s = elements.oneClickPipeline?.querySelector("span");
     if (s) s.textContent = t;
   };
+
+  // ⓪ 填了具体产品但还没细化过 → 先自动细化定位，让后面每一步都围绕这个具体产品
+  if (useAI && state.campaign.focusProduct && (state.campaign.productTerms || []).length <= 1) {
+    stepText("⓪ 细化产品定位…");
+    addLog(`一键起量 ⓪：先细化「${state.campaign.focusProduct}」的产品定位…`);
+    renderLogs();
+    await refineProductFocus();
+  }
 
   // ① 找客户
   stepText("①/④ 联网找客户…");

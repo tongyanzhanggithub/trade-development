@@ -1,0 +1,41 @@
+{
+  "name": "cq-trade-outreach",
+  "version": "1.0.0",
+  "description": "重庆外贸自动获客系统 - 本地桌面版",
+  "main": "main.js",
+  "author": "aaron tong",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^31.7.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.cqtrade.outreach",
+    "productName": "重庆外贸自动获客",
+    "directories": {
+      "output": "dist-desktop"
+    },
+    "files": [
+      "main.js",
+      "index.html",
+      "app.js",
+      "styles.css"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "重庆外贸自动获客"
+    }
+  }
+}

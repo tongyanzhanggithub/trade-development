@@ -1,4 +1,4 @@
-window.__APP_V = "35";
+window.__APP_V = "37";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -90,6 +90,8 @@ const elements = {
   ruleRequireApproval: $("#ruleRequireApproval"),
   saveSettings: $("#saveSettings"),
   backupNow: $("#backupNow"),
+  importBackup: $("#importBackup"),
+  importBackupFile: $("#importBackupFile"),
   dataSafety: $("#dataSafety"),
   localMode: $("#localMode"),
   webhookMode: $("#webhookMode"),
@@ -245,6 +247,7 @@ const sourceChannels = [
 // 模块级 UI 运行时状态（不持久化）——必须在首次 render() 前初始化，避免 TDZ 崩溃
 const quickReplyDrafts = {};
 const quickReplyChannels = {};
+let stateNeedsInitialSave = false;
 
 let state = loadState();
 
@@ -262,68 +265,86 @@ function loadState() {
 
   try {
     const parsed = JSON.parse(saved);
-    if (!parsed.campaign) return createDemoState();
-
-    const fallback = createDemoState();
-    const merged = {
-      ...fallback,
-      ...parsed,
-      campaign: { ...fallback.campaign, ...parsed.campaign },
-      settings: { ...fallback.settings, ...parsed.settings },
-      searchPlan: Array.isArray(parsed.searchPlan) ? parsed.searchPlan : fallback.searchPlan,
-      prospects: Array.isArray(parsed.prospects) ? parsed.prospects : fallback.prospects,
-      sequence: Array.isArray(parsed.sequence) ? parsed.sequence : fallback.sequence,
-      whatsappSequence: Array.isArray(parsed.whatsappSequence)
-        ? parsed.whatsappSequence
-        : fallback.whatsappSequence,
-      outbox: Array.isArray(parsed.outbox) ? parsed.outbox : fallback.outbox,
-      whatsappQueue: Array.isArray(parsed.whatsappQueue) ? parsed.whatsappQueue : fallback.whatsappQueue,
-      tasks: Array.isArray(parsed.tasks) ? parsed.tasks : fallback.tasks,
-      inbound: Array.isArray(parsed.inbound) ? parsed.inbound : fallback.inbound,
-      webhookLog: Array.isArray(parsed.webhookLog) ? parsed.webhookLog : fallback.webhookLog,
-      selectedConversationId: parsed.selectedConversationId || fallback.selectedConversationId,
-      relay: { ...fallback.relay, ...(parsed.relay || {}) },
-      autopilot: { ...fallback.autopilot, ...(parsed.autopilot || {}) },
-      ui: { ...fallback.ui, ...(parsed.ui || {}) },
-      agent: {
-        task: parsed.agent?.task || null,
-        approvals: Array.isArray(parsed.agent?.approvals) ? parsed.agent.approvals : [],
-        autoRespond: !!parsed.agent?.autoRespond,
-        autoRespondLive: !!parsed.agent?.autoRespondLive
-      },
-      logs: Array.isArray(parsed.logs) ? parsed.logs : fallback.logs,
-      blacklist: Array.isArray(parsed.blacklist) ? parsed.blacklist : fallback.blacklist,
-      management: parsed.management
-        ? mergeManagement(fallback.management, parsed.management)
-        : fallback.management
-    };
-    // 迁移：老数据的线索没有 campaignId，归到当前活动，保证活动计数不落空
-    const homeId = merged.activeCampaignId || merged.management.campaigns[0]?.id || null;
-    merged.prospects = merged.prospects.map((p) => (p.campaignId ? p : { ...p, campaignId: homeId }));
-    // 迁移：v35 起 "待发送" 表示已人工批准；旧版未发送队列先回到待审批，避免升级后被误认为已批准。
-    if (!parsed.ui?.sendApprovalMigrated) {
-      merged.outbox = merged.outbox.map((item) =>
-        item.status === "待发送" && !item.sentAt ? { ...item, status: "待审批" } : item
-      );
-      const sentProspects = new Set([
-        ...merged.outbox.filter((item) => item.status === "已发送").map((item) => item.prospectId),
-        ...merged.whatsappQueue.filter((item) => item.status === "已发送").map((item) => item.prospectId)
-      ]);
-      const repliedProspects = new Set([
-        ...merged.inbound.map((item) => item.prospectId),
-        ...merged.prospects.filter((item) => item.status === "已回复").map((item) => item.id)
-      ]);
-      merged.prospects = merged.prospects.map((item) =>
-        item.dealStage === "已触达" && !sentProspects.has(item.id) && !repliedProspects.has(item.id)
-          ? { ...item, dealStage: "线索" }
-          : item
-      );
-      merged.ui.sendApprovalMigrated = true;
-    }
-    return merged;
+    return normalizeStoredState(parsed);
   } catch {
     return createDemoState();
   }
+}
+
+function normalizeStoredState(parsed) {
+  if (!parsed?.campaign) return createDemoState();
+
+  const fallback = createDemoState();
+  let migrated = false;
+  const merged = {
+    ...fallback,
+    ...parsed,
+    campaign: { ...fallback.campaign, ...parsed.campaign },
+    settings: { ...fallback.settings, ...parsed.settings },
+    searchPlan: Array.isArray(parsed.searchPlan) ? parsed.searchPlan : fallback.searchPlan,
+    prospects: Array.isArray(parsed.prospects) ? parsed.prospects : fallback.prospects,
+    sequence: Array.isArray(parsed.sequence) ? parsed.sequence : fallback.sequence,
+    whatsappSequence: Array.isArray(parsed.whatsappSequence)
+      ? parsed.whatsappSequence
+      : fallback.whatsappSequence,
+    outbox: Array.isArray(parsed.outbox) ? parsed.outbox : fallback.outbox,
+    whatsappQueue: Array.isArray(parsed.whatsappQueue) ? parsed.whatsappQueue : fallback.whatsappQueue,
+    tasks: Array.isArray(parsed.tasks) ? parsed.tasks : fallback.tasks,
+    inbound: Array.isArray(parsed.inbound) ? parsed.inbound : fallback.inbound,
+    webhookLog: Array.isArray(parsed.webhookLog) ? parsed.webhookLog : fallback.webhookLog,
+    selectedConversationId: parsed.selectedConversationId || fallback.selectedConversationId,
+    relay: { ...fallback.relay, ...(parsed.relay || {}) },
+    autopilot: { ...fallback.autopilot, ...(parsed.autopilot || {}) },
+    ui: { ...fallback.ui, ...(parsed.ui || {}) },
+    agent: {
+      task: parsed.agent?.task || null,
+      approvals: Array.isArray(parsed.agent?.approvals) ? parsed.agent.approvals : [],
+      autoRespond: !!parsed.agent?.autoRespond,
+      autoRespondLive: !!parsed.agent?.autoRespondLive
+    },
+    logs: Array.isArray(parsed.logs) ? parsed.logs : fallback.logs,
+    blacklist: Array.isArray(parsed.blacklist) ? parsed.blacklist : fallback.blacklist,
+    management: parsed.management
+      ? mergeManagement(fallback.management, parsed.management)
+      : fallback.management
+  };
+
+  // 迁移：老数据的线索没有 campaignId，归到当前活动，保证活动计数不落空
+  const homeId = merged.activeCampaignId || merged.management.campaigns[0]?.id || null;
+  if (homeId && merged.prospects.some((p) => !p.campaignId)) migrated = true;
+  merged.prospects = merged.prospects.map((p) => (p.campaignId ? p : { ...p, campaignId: homeId }));
+
+  // 迁移：v35 起 "待发送" 表示已人工批准；旧版未发送队列先回到待审批，避免升级后被误认为已批准。
+  if (!parsed.ui?.sendApprovalMigrated) {
+    migrated = true;
+    merged.outbox = merged.outbox.map((item) =>
+      item.status === "待发送" && !item.sentAt ? { ...item, status: "待审批" } : item
+    );
+    merged.ui.sendApprovalMigrated = true;
+  }
+
+  // 迁移：只有真实已发送记录才算已触达；修正曾经因"仅入队"被推进的 CRM 阶段。
+  if (!parsed.ui?.sentOnlyStageMigrated) {
+    migrated = true;
+    const sentProspects = new Set([
+      ...merged.outbox.filter((item) => item.status === "已发送").map((item) => item.prospectId),
+      ...merged.whatsappQueue.filter((item) => item.status === "已发送").map((item) => item.prospectId)
+    ]);
+    const repliedProspects = new Set([
+      ...merged.inbound.map((item) => item.prospectId),
+      ...merged.prospects.filter((item) => item.status === "已回复").map((item) => item.id)
+    ]);
+    merged.prospects = merged.prospects.map((item) =>
+      item.dealStage === "已触达" && !sentProspects.has(item.id) && !repliedProspects.has(item.id)
+        ? { ...item, dealStage: "线索" }
+        : item
+    );
+    merged.ui.sentOnlyStageMigrated = true;
+  }
+
+  if (migrated) stateNeedsInitialSave = true;
+
+  return merged;
 }
 
 function createDemoState() {
@@ -385,7 +406,7 @@ function createDemoState() {
       whatsappNoReplyDays: 2
     },
     autopilot: { enabled: false, intervalSec: 8 },
-    ui: { checklistDismissed: false, theme: "light", analyticsRange: "all", sendApprovalMigrated: true },
+    ui: { checklistDismissed: false, theme: "light", analyticsRange: "all", sendApprovalMigrated: true, sentOnlyStageMigrated: true },
     agent: { task: null, approvals: [], autoRespond: false },
     blacklist: [], // 持久退订黑名单：[{ email, domain, company, reason, at }]，清空线索池也不丢
     management: createManagementState(campaign),
@@ -5165,7 +5186,7 @@ function parseAgentTaskLocal(prompt) {
   if (!product && enMatch && !/whatsapp/i.test(enMatch[0])) product = enMatch[0].trim().toLowerCase();
   if (!product) product = state.campaign.product;
 
-  const limitMatch = prompt.match(/(?:每日|每天|日|上限)[^\d]{0,6}(\d{1,3})/) || prompt.match(/(\d{1,3})\s*家/);
+  const limitMatch = prompt.match(/(?:每日|每天|日|上限)[^\d]{0,6}(\d{1,3})/) || prompt.match(/(\d{1,3})\s*(?:家|个)/);
   const sizeMatch = prompt.match(/规模[^，。,]{0,30}/);
   const exclMatch = prompt.match(/排除[^，。,]{0,30}/);
 
@@ -7039,6 +7060,47 @@ function exportJson() {
   addLog("已导出全量备份（含线索/队列/黑名单/配置），请妥善保存该 JSON 文件");
 }
 
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("文件读取失败"));
+    reader.readAsText(file);
+  });
+}
+
+async function importBackupFile(file) {
+  if (!file) return;
+  try {
+    const text = await readFileAsText(file);
+    const parsed = JSON.parse(text);
+    if (!parsed?.campaign) throw new Error("不是有效的系统备份 JSON");
+    const prospectCount = Array.isArray(parsed.prospects) ? parsed.prospects.length : 0;
+    const outboxCount = Array.isArray(parsed.outbox) ? parsed.outbox.length : 0;
+    const ok = window.confirm(
+      `将恢复备份「${file.name}」并覆盖当前浏览器数据。\n\n备份包含：${prospectCount} 条线索、${outboxCount} 封邮件队列。\n\n继续导入？`
+    );
+    if (!ok) return;
+    const restored = normalizeStoredState(parsed);
+    restored.ui = { ...(restored.ui || {}), lastBackupAt: new Date().toISOString() };
+    restored.logs = [
+      { id: makeId("log"), time: timestamp(), message: `已从备份恢复：${file.name}` },
+      ...(restored.logs || [])
+    ].slice(0, 80);
+    state = restored;
+    bindCampaignForm();
+    bindSettingsForm();
+    bindManagementForm();
+    bindInboxForm();
+    saveState();
+    render();
+  } catch (error) {
+    addLog(`导入备份失败：${error.message}`);
+    saveState();
+    render();
+  }
+}
+
 function exportQueries() {
   const rows = state.searchPlan.map((item) => ({
     channel: item.channel,
@@ -7211,6 +7273,16 @@ elements.runAutomationTop.addEventListener("click", () => {
 
 elements.exportJson.addEventListener("click", exportJson);
 if (elements.backupNow) elements.backupNow.addEventListener("click", exportJson);
+if (elements.importBackup) {
+  elements.importBackup.addEventListener("click", () => elements.importBackupFile?.click());
+}
+if (elements.importBackupFile) {
+  elements.importBackupFile.addEventListener("change", async () => {
+    const file = elements.importBackupFile.files?.[0];
+    await importBackupFile(file);
+    elements.importBackupFile.value = "";
+  });
+}
 
 elements.copyQueries.addEventListener("click", async () => {
   await copyText(state.searchPlan.map((item) => item.query).join("\n"));
@@ -7759,7 +7831,8 @@ elements.agentDemoData.addEventListener("click", () => {
     addLog("请先解析并确认任务卡片，再体验演示数据");
     return;
   }
-  const generated = generateProspects(state.campaign, 16);
+  const targetCount = clamp(task.parsed?.daily_limit || 16, 1, 50);
+  const generated = generateProspects(state.campaign, targetCount);
   const seen = new Set(state.prospects.map((p) => p.website || p.company.toLowerCase()));
   const fresh = generated.filter((p) => {
     const key = p.website || p.company.toLowerCase();
@@ -8098,3 +8171,7 @@ window.addEventListener("storage", (event) => {
 
 // 首次渲染（放在文件末尾，确保 render 依赖的所有模块级 const 已初始化）
 render();
+if (stateNeedsInitialSave) {
+  saveState();
+  stateNeedsInitialSave = false;
+}

@@ -211,6 +211,7 @@ h3 {
 }
 
 .panel {
+  min-width: 0;
   padding: 18px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -241,6 +242,14 @@ h3 {
 
 .primary-button:hover {
   background: var(--teal-dark);
+}
+
+.primary-button.needs-config,
+.ghost-button.needs-config {
+  background: var(--surface);
+  color: var(--muted);
+  border-color: var(--line);
+  border-style: dashed;
 }
 
 .ghost-button {
@@ -3167,4 +3176,33 @@ body.dark .pf-block-count {
 body.dark .email-cand {
   background: var(--surface-soft);
   border-color: var(--line);
+}
+
+/* 数据与备份面板 */
+.data-safety {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.safety-row {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  font-size: 13.5px;
+}
+
+.safety-row > span {
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 12.5px;
+}
+
+.backup-overdue {
+  color: #b42318;
+}
+
+body.dark .backup-overdue {
+  color: #f87171;
 }

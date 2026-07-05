@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>自动化外贸开发系统</title>
-    <link rel="stylesheet" href="./styles.css?v=34" />
+    <link rel="stylesheet" href="./styles.css?v=35" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
@@ -114,55 +114,55 @@
           </div>
         </div>
         <nav class="nav-tabs">
-          <button class="nav-tab is-active" data-view="dashboard" type="button">
+          <button class="nav-tab is-active" data-view="dashboard" type="button" aria-label="控制台" title="控制台">
             <svg><use href="#icon-rocket" /></svg>
             <span>控制台</span>
           </button>
-          <button class="nav-tab" data-view="agent" type="button">
+          <button class="nav-tab" data-view="agent" type="button" aria-label="AI Agent" title="AI Agent">
             <svg><use href="#icon-robot" /></svg>
             <span>AI Agent</span>
           </button>
           <p class="nav-group-label">① 获客</p>
-          <button class="nav-tab" data-view="discovery" type="button">
+          <button class="nav-tab" data-view="discovery" type="button" aria-label="搜索与采集" title="搜索与采集">
             <svg><use href="#icon-search" /></svg>
             <span>搜索</span>
           </button>
-          <button class="nav-tab" data-view="prospects" type="button">
+          <button class="nav-tab" data-view="prospects" type="button" aria-label="潜客队列" title="潜客队列">
             <svg><use href="#icon-users" /></svg>
             <span>潜客</span>
           </button>
           <p class="nav-group-label">② 触达</p>
-          <button class="nav-tab" data-view="email" type="button">
+          <button class="nav-tab" data-view="email" type="button" aria-label="开发信序列" title="开发信序列">
             <svg><use href="#icon-mail" /></svg>
             <span>邮件</span>
           </button>
-          <button class="nav-tab" data-view="whatsapp" type="button">
+          <button class="nav-tab" data-view="whatsapp" type="button" aria-label="WhatsApp 开发" title="WhatsApp 开发">
             <svg><use href="#icon-message" /></svg>
             <span>WhatsApp</span>
           </button>
-          <button class="nav-tab" data-view="automation" type="button">
+          <button class="nav-tab" data-view="automation" type="button" aria-label="发信与跟进队列" title="发信与跟进队列">
             <svg><use href="#icon-zap" /></svg>
             <span>队列</span>
           </button>
           <p class="nav-group-label">③ 转化</p>
-          <button class="nav-tab" data-view="inbox" type="button">
+          <button class="nav-tab" data-view="inbox" type="button" aria-label="全渠道统一收件箱" title="全渠道统一收件箱">
             <svg><use href="#icon-inbox" /></svg>
             <span>收件箱</span>
           </button>
-          <button class="nav-tab" data-view="crm" type="button">
+          <button class="nav-tab" data-view="crm" type="button" aria-label="CRM 商机管道" title="CRM 商机管道">
             <svg><use href="#icon-columns" /></svg>
             <span>CRM</span>
           </button>
-          <button class="nav-tab" data-view="analytics" type="button">
+          <button class="nav-tab" data-view="analytics" type="button" aria-label="数据分析看板" title="数据分析看板">
             <svg><use href="#icon-chart" /></svg>
             <span>分析</span>
           </button>
           <p class="nav-group-label">系统</p>
-          <button class="nav-tab" data-view="management" type="button">
+          <button class="nav-tab" data-view="management" type="button" aria-label="运营管理后台" title="运营管理后台">
             <svg><use href="#icon-briefcase" /></svg>
             <span>管理</span>
           </button>
-          <button class="nav-tab" data-view="settings" type="button">
+          <button class="nav-tab" data-view="settings" type="button" aria-label="自动化接口设置" title="自动化接口设置">
             <svg><use href="#icon-settings" /></svg>
             <span>设置</span>
           </button>
@@ -185,13 +185,13 @@
             <button class="icon-button" id="exportJson" type="button" aria-label="导出全部数据" title="导出全部数据">
               <svg><use href="#icon-download" /></svg>
             </button>
-            <button class="ghost-button" id="autopilotToggle" type="button" title="开启后自动执行：线索处理→入队→发送→回传→接力→AI草稿">
+            <button class="ghost-button" id="autopilotToggle" type="button" title="开启后自动执行：线索处理→入队待审→接力→AI草稿；发送始终需人工确认">
               <svg><use href="#icon-zap" /></svg>
               <span>自动驾驶：关</span>
             </button>
-            <button class="primary-button" id="runAutomationTop" type="button">
+            <button class="primary-button" id="runAutomationTop" type="button" title="运行获客处理并准备待审批队列，不会直接发送">
               <svg><use href="#icon-play" /></svg>
-              <span>运行自动化</span>
+              <span>准备获客队列</span>
             </button>
           </div>
         </header>
@@ -271,7 +271,7 @@
                 <input id="companyInput" name="companyName" />
               </label>
               <div class="button-row">
-                <button class="primary-button" id="oneClickPipeline" type="button" title="一条龙：联网找客户 → 批量补全联系方式 → 质量分入队优质客户 → 生成待发邮件，最后停在批量审批（发送始终等你过目）">
+                <button class="primary-button" id="oneClickPipeline" type="button" title="一条龙：联网找客户 → 批量补全联系方式 → 质量分入队优质客户 → 生成待审批邮件，最后停在批量审批（发送始终等你过目）">
                   <svg><use href="#icon-rocket" /></svg>
                   <span>一键起量</span>
                 </button>
@@ -390,7 +390,7 @@
               </div>
               <button class="primary-button" id="agentApproveAll" type="button">
                 <svg><use href="#icon-check" /></svg>
-                <span>全部通过并发送</span>
+                <span>批量通过并发首触</span>
               </button>
             </div>
             <div class="agent-approval-list" id="agentApprovalList"></div>
@@ -407,8 +407,12 @@
                 <span>开启初轮自动应答</span>
               </label>
             </div>
+            <label class="toggle-row" title="试运行（默认）：AI 应答先存草稿到队列，你审批后才发；确认答得稳了再勾选直发">
+              <input id="agentRespondLive" type="checkbox" />
+              <span>直发模式（不勾 = 试运行：AI 应答先进队列等你审批）</span>
+            </label>
             <p class="connector-hint">
-              开启后：客户回复「你们做什么/发个目录/价格多少」等标准问题时 AI 自动答复（明确告知详细报价由销售同事跟进）；<strong>涉及具体报价/折扣、账期、独家代理等敏感话题一律不擅自答复，立即转人工</strong>；客户 opt-out 即时加入黑名单并停止触达。所有 AI 应答均留痕可查。
+              开启后：客户回复「你们做什么/发个目录/价格多少」等标准问题时 AI 自动应答（明确告知详细报价由销售同事跟进）；<strong>默认试运行——应答先存草稿等你审批，你认可后再切直发</strong>；<strong>涉及具体报价/折扣、账期、独家代理等敏感话题一律不擅自答复，立即转人工</strong>；客户 opt-out 即时加入黑名单并停止触达。所有 AI 应答均留痕可查。
             </p>
             <label>
               <span>产品知识库 / 常见问答（喂给 AI 初轮应答，可留空）</span>
@@ -632,6 +636,10 @@
               <h2 id="inboxTitle">全渠道统一收件箱</h2>
             </div>
             <div class="topbar-actions">
+              <button class="ghost-button" id="pullReplies" type="button" title="从「拉取回复 Webhook」拉真实客户回信进收件箱（需在设置里配置）">
+                <svg><use href="#icon-inbox" /></svg>
+                <span>拉取回复</span>
+              </button>
               <button class="ghost-button" id="markAllRead" type="button">
                 <svg><use href="#icon-check" /></svg>
                 <span>全部标记已读</span>
@@ -722,13 +730,13 @@
               <h2 id="automationTitle">发信与跟进队列</h2>
             </div>
             <div class="topbar-actions">
-              <button class="ghost-button" id="simulateSend" type="button">
+              <button class="ghost-button" id="simulateSend" type="button" title="只发送已经批准的第一封待发送邮件">
                 <svg><use href="#icon-play" /></svg>
-                <span>发送一封</span>
+                <span>发送已批准一封</span>
               </button>
-              <button class="ghost-button" id="sendDueBtn" type="button">
+              <button class="ghost-button" id="sendDueBtn" type="button" title="只发送已批准且今日到期的邮件；未审批邮件请用批量审批发送">
                 <svg><use href="#icon-zap" /></svg>
-                <span>发送今日到期</span>
+                <span>发送已批准到期</span>
               </button>
               <button class="primary-button" id="queueFollowups" type="button" title="给已发过首封、超过跟进间隔仍未回复的客户，一键排下一封跟进邮件（待你审批发送）">
                 <svg><use href="#icon-shuffle" /></svg>
@@ -925,9 +933,9 @@
                   <p class="eyebrow">Approvals</p>
                   <h2>审批中心</h2>
                 </div>
-                <button class="ghost-button" id="approveAll" type="button">
+                <button class="ghost-button" id="approveAll" type="button" title="Agent 触达卡会通过并发送；普通邮件只批准为待发送">
                   <svg><use href="#icon-check" /></svg>
-                  <span>全部通过</span>
+                  <span>全部通过/放行</span>
                 </button>
               </div>
               <div class="approval-list" id="approvalCenter"></div>
@@ -1056,6 +1064,16 @@
                   <span class="webhook-status" data-webhook-status="crm">未测试</span>
                 </div>
               </div>
+              <div class="connector-row" data-webhook="inbound">
+                <label>
+                  <span>拉取回复 Webhook（真实客户回信入口：接 n8n/IMAP 收件服务）</span>
+                  <input id="inboundWebhook" placeholder="https://..." />
+                </label>
+                <div class="connector-foot">
+                  <button class="ghost-button test-webhook" data-webhook="inbound" type="button">测试连接</button>
+                  <span class="webhook-status" data-webhook-status="inbound">未测试</span>
+                </div>
+              </div>
             </section>
             <section class="panel connector-panel">
               <label>
@@ -1130,13 +1148,30 @@
               </div>
               <button class="primary-button" id="dispatchWebhooks" type="button">
                 <svg><use href="#icon-play" /></svg>
-                <span>派发待处理队列</span>
+                <span>派发已批准到期</span>
               </button>
             </div>
             <p class="connector-hint">
-              Webhook 模式下，把待发送邮件交给发信服务、已审批 WhatsApp 交给 Business API、潜客同步到 CRM。本地模式下此按钮仅做本地模拟发送。
+              Webhook 模式下，把已批准且到期的邮件交给发信服务、已审批且到期的 WhatsApp 交给 Business API、潜客同步到 CRM。本地模式下此按钮仅做本地模拟发送。
             </p>
             <div class="run-log" id="webhookLog"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Data safety</p>
+                <h2>数据与备份</h2>
+              </div>
+              <button class="primary-button" id="backupNow" type="button">
+                <svg><use href="#icon-download" /></svg>
+                <span>立即备份（导出 JSON）</span>
+              </button>
+            </div>
+            <div class="data-safety" id="dataSafety"></div>
+            <p class="connector-hint">
+              所有数据（线索/队列/黑名单/配置/API Key）只存在<strong>本机浏览器</strong>里：清浏览器缓存、换浏览器、换端口访问都会看不到数据。建议每周备份一份 JSON；换电脑时用备份文件恢复。
+            </p>
           </section>
         </section>
       </main>
@@ -1158,11 +1193,11 @@
 
     <div class="toast-stack" id="toastStack" aria-live="polite"></div>
 
-    <script src="./app.js?v=34" defer></script>
+    <script src="./app.js?v=35" defer></script>
     <script>
       // 缓存哨兵：若浏览器仍加载旧版 app.js（版本不匹配或加载失败导致按钮失灵），给出明确提示
       window.addEventListener("load", () => {
-        if (window.__APP_V !== "34") {
+        if (window.__APP_V !== "35") {
           const tip = document.createElement("div");
           tip.style.cssText =
             "position:fixed;top:0;left:0;right:0;z-index:9999;padding:12px 16px;background:#c2410c;color:#fff;font-size:14px;text-align:center;font-weight:700;";

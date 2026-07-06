@@ -1,6 +1,62 @@
-window.__APP_V = "37";
+window.__APP_V = "c4fe2359";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
+
+// AI 服务商预设。除 Anthropic 外都走 OpenAI 兼容的 /chat/completions 协议，
+// 所以 ChatGPT、DeepSeek、通义千问、Kimi、智谱 GLM 等用同一套客户端，只是地址/模型不同。
+// 放在最顶部：初始化时 bindSettingsForm() 会经 applyAiProviderToForm 读它，需先于其初始化（避免 const TDZ）。
+const AI_PROVIDERS = {
+  anthropic: {
+    label: "Claude (Anthropic)",
+    url: "https://api.anthropic.com/v1/messages",
+    auth: "anthropic",
+    keyHint: "sk-ant-...",
+    models: ["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"],
+    webSearch: true
+  },
+  openai: {
+    label: "OpenAI ChatGPT",
+    url: "https://api.openai.com/v1/chat/completions",
+    auth: "bearer",
+    keyHint: "sk-...",
+    models: ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "o4-mini"]
+  },
+  deepseek: {
+    label: "DeepSeek 深度求索",
+    url: "https://api.deepseek.com/v1/chat/completions",
+    auth: "bearer",
+    keyHint: "sk-...",
+    models: ["deepseek-chat", "deepseek-reasoner"]
+  },
+  qwen: {
+    label: "通义千问 Qwen（阿里）",
+    url: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+    auth: "bearer",
+    keyHint: "sk-...",
+    models: ["qwen-max", "qwen-plus", "qwen-turbo"]
+  },
+  kimi: {
+    label: "Kimi（Moonshot）",
+    url: "https://api.moonshot.cn/v1/chat/completions",
+    auth: "bearer",
+    keyHint: "sk-...",
+    models: ["kimi-k2-0711-preview", "moonshot-v1-32k", "moonshot-v1-8k"]
+  },
+  zhipu: {
+    label: "智谱 GLM",
+    url: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    auth: "bearer",
+    keyHint: "xxxxx.xxxxx",
+    models: ["glm-4-plus", "glm-4-air", "glm-4-flash"]
+  },
+  custom: {
+    label: "自定义（OpenAI 兼容）",
+    url: "",
+    auth: "bearer",
+    keyHint: "填你的 API Key",
+    models: []
+  }
+};
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -144,7 +200,12 @@ const elements = {
   analyticsRange: $("#analyticsRange"),
   aiEngineStatus: $("#aiEngineStatus"),
   aiLocalMode: $("#aiLocalMode"),
-  aiClaudeMode: $("#aiClaudeMode"),
+  aiCloudMode: $("#aiCloudMode"),
+  aiProviderSelect: $("#aiProviderSelect"),
+  aiCloudRow: $("#aiCloudRow"),
+  aiBaseUrlRow: $("#aiBaseUrlRow"),
+  aiBaseUrlInput: $("#aiBaseUrlInput"),
+  aiModelList: $("#aiModelList"),
   aiApiKeyInput: $("#aiApiKeyInput"),
   aiModelSelect: $("#aiModelSelect"),
   testAiEngine: $("#testAiEngine"),
@@ -385,8 +446,10 @@ function createDemoState() {
       crmProvider: "Twenty / Wukong CRM",
       webhookStatus: {},
       aiEngine: "local",
+      aiProvider: "deepseek",
       aiApiKey: "",
-      aiModel: "claude-opus-4-8"
+      aiBaseUrl: "",
+      aiModel: "deepseek-chat"
     },
     searchPlan,
     prospects,
@@ -461,7 +524,25 @@ function mergeManagement(fallback, current) {
 
 let storageWriteFailed = false;
 
-function saveState() {
+// 持久化改用防抖：把一次操作里连续多次 saveState 合并成一次写盘（整份 state 的
+// JSON.stringify 在数据量大时开销明显）。为避免防抖丢数据，做了三重兜底：
+//   ① maxWait：即使 saveState 被持续触发（如自动驾驶），最多攒 SAVE_MAX_WAIT 就强制落盘；
+//   ② 页面隐藏/卸载时（pagehide / visibilitychange→hidden / beforeunload）同步 flush；
+//   ③ flushState() 供关键路径显式立即落盘。
+const SAVE_DEBOUNCE = 400;
+const SAVE_MAX_WAIT = 2000;
+let saveTimer = null;
+let saveDirty = false;
+let saveFirstPendingAt = 0;
+
+// 立即把内存 state 同步写入 localStorage。防抖计时器与关键路径都走它。
+function flushState() {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  saveDirty = false;
+  saveFirstPendingAt = 0;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     storageWriteFailed = false;
@@ -473,6 +554,32 @@ function saveState() {
     }
   }
 }
+
+// 防抖入口：绝大多数调用点用它，攒一小会儿再合并写盘，最长不超过 SAVE_MAX_WAIT。
+function saveState() {
+  const now = Date.now();
+  if (!saveDirty) {
+    saveDirty = true;
+    saveFirstPendingAt = now;
+  }
+  if (saveTimer) clearTimeout(saveTimer);
+  // 距首次待写已超过 maxWait 就立刻落盘，避免持续触发把写盘无限往后推
+  if (now - saveFirstPendingAt >= SAVE_MAX_WAIT) {
+    flushState();
+    return;
+  }
+  saveTimer = setTimeout(flushState, SAVE_DEBOUNCE);
+}
+
+// 页面隐藏/关闭时把未落盘的改动同步写下去（localStorage.setItem 同步，能在处理器内完成）
+function flushOnExit() {
+  if (saveDirty) flushState();
+}
+window.addEventListener("pagehide", flushOnExit);
+window.addEventListener("beforeunload", flushOnExit);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") flushOnExit();
+});
 
 // 当前数据占用（KB）与大致上限占比，供设置页展示
 function storageUsage() {
@@ -623,7 +730,7 @@ async function refineProductFocus() {
     const user = `具体产品: ${raw}
 所属大类: ${CQ_PRESETS[state.campaign.presetKey]?.label || state.campaign.product}
 目标市场: ${state.campaign.markets}`;
-    const data = await callClaude(system, user, AI_FOCUS_SCHEMA, 800);
+    const data = await callAI(system, user, AI_FOCUS_SCHEMA, 800);
     const terms = [data.english_term, ...(data.synonyms || [])].filter(Boolean);
     state.campaign.product = data.english_term;
     state.campaign.productTerms = terms;
@@ -685,6 +792,9 @@ function bindSettingsForm() {
   elements.crmProvider.value = settings.crmProvider;
   elements.aiApiKeyInput.value = settings.aiApiKey || "";
   elements.aiModelSelect.value = settings.aiModel || "claude-opus-4-8";
+  if (elements.aiProviderSelect) elements.aiProviderSelect.value = aiProviderId();
+  if (elements.aiBaseUrlInput) elements.aiBaseUrlInput.value = settings.aiBaseUrl || "";
+  applyAiProviderToForm();
   updateModeButtons();
 }
 
@@ -747,39 +857,45 @@ function readSettingsFromForm() {
     emailProvider: elements.emailProvider.value,
     crmProvider: elements.crmProvider.value,
     aiApiKey: elements.aiApiKeyInput.value.trim(),
-    aiModel: elements.aiModelSelect.value
+    aiProvider: elements.aiProviderSelect ? elements.aiProviderSelect.value : state.settings.aiProvider || "anthropic",
+    aiBaseUrl: elements.aiBaseUrlInput ? elements.aiBaseUrlInput.value.trim() : state.settings.aiBaseUrl || "",
+    aiModel: (elements.aiModelSelect.value || "").trim()
   };
+}
+
+// 每个视图对应的渲染函数。render() 只重建当前可见视图，隐藏视图在
+// navigateTo 切过去时才渲染——避免每次操作都重建全部 12 个视图的 innerHTML。
+const VIEW_RENDERERS = {
+  dashboard: [renderMetrics, renderWorkflow, renderTopProspects, renderChecklist],
+  agent: [renderAgent],
+  discovery: [renderQueries],
+  prospects: [renderProspects, renderProspectDetail],
+  email: [renderEmailSelect, renderSequence],
+  whatsapp: [renderWhatsappSelect, renderWhatsappSequence],
+  inbox: [renderInbox],
+  crm: [renderCrm],
+  automation: [renderOutbox, renderWhatsappQueue, renderTasks, renderLogs],
+  analytics: [renderAnalytics],
+  management: [renderManagement],
+  settings: [renderDataSafety, renderWebhookPanel]
+};
+
+function getActiveView() {
+  const active = document.querySelector(".view.is-active");
+  return active ? active.id.replace(/View$/, "") : "dashboard";
 }
 
 function render() {
   ensureSelection();
+  // 全局元素（顶栏状态、导航徽标、模式/自动驾驶/AI 开关）——成本低且始终可见，每次都刷新
   renderStatus();
-  renderMetrics();
-  renderWorkflow();
-  renderQueries();
-  renderTopProspects();
-  renderProspects();
-  renderProspectDetail();
-  renderEmailSelect();
-  renderSequence();
-  renderWhatsappSelect();
-  renderWhatsappSequence();
-  renderOutbox();
-  renderWhatsappQueue();
-  renderTasks();
-  renderInbox();
-  renderCrm();
-  renderAnalytics();
-  renderAgent();
-  renderLogs();
-  renderManagement();
-  renderDataSafety();
-  renderWebhookPanel();
   updateModeButtons();
   updateAutopilotButton();
   updateAiEngineButtons();
   renderNavBadges();
-  renderChecklist();
+  // 仅渲染当前视图
+  const fns = VIEW_RENDERERS[getActiveView()];
+  if (fns) fns.forEach((fn) => fn());
 }
 
 function ensureSelection() {
@@ -4392,14 +4508,33 @@ async function sendQuickReply(prospectId, channel, text) {
   render();
 }
 
-/* ---------- AI 引擎：Claude API 真实智能（未配置时自动降级本地规则） ---------- */
+/* ---------- AI 引擎：多服务商（Claude / ChatGPT / 国产大模型），未配置时降级本地规则 ---------- */
+// 服务商预设表 AI_PROVIDERS 定义在 00-core.js 顶部（初始化早于设置表单绑定，避免 TDZ）。
+
+// 兼容旧存档：老版本只有 aiEngine==="claude"，等价于云端 + Anthropic
+function aiProviderId() {
+  if (state.settings.aiEngine === "claude") return "anthropic";
+  return state.settings.aiProvider || "anthropic";
+}
+function aiProviderConf() {
+  return AI_PROVIDERS[aiProviderId()] || AI_PROVIDERS.anthropic;
+}
+function aiEndpoint() {
+  const id = aiProviderId();
+  return id === "custom" ? (state.settings.aiBaseUrl || "").trim() : AI_PROVIDERS[id].url;
+}
+// 联网找客户/反查经销商依赖 Claude 的 web_search 工具，仅 Anthropic 支持
+function aiWebSearchCapable() {
+  return aiEnabled() && aiProviderId() === "anthropic";
+}
 
 function aiEnabled() {
-  return state.settings.aiEngine === "claude" && !!(state.settings.aiApiKey || "").trim();
+  const e = state.settings.aiEngine;
+  return (e === "cloud" || e === "claude") && !!(state.settings.aiApiKey || "").trim();
 }
 
 function showAiSetup(message) {
-  state.settings.aiEngine = "claude";
+  state.settings.aiEngine = "cloud";
   addLog(message);
   updateAiEngineButtons();
   navigateTo("settings");
@@ -4407,7 +4542,14 @@ function showAiSetup(message) {
   saveState();
 }
 
-async function callClaude(systemPrompt, userText, schema, maxTokens = 2048) {
+// 统一入口：按当前服务商分派到 Anthropic 或 OpenAI 兼容协议
+async function callAI(systemPrompt, userText, schema, maxTokens = 2048) {
+  return aiProviderConf().auth === "anthropic"
+    ? callAnthropic(systemPrompt, userText, schema, maxTokens)
+    : callOpenAICompatible(systemPrompt, userText, schema, maxTokens);
+}
+
+async function callAnthropic(systemPrompt, userText, schema, maxTokens = 2048) {
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -4432,6 +4574,66 @@ async function callClaude(systemPrompt, userText, schema, maxTokens = 2048) {
   if (data.stop_reason === "refusal") throw new Error("请求被安全策略拒绝");
   const text = data.content?.find((block) => block.type === "text")?.text || "";
   return schema ? JSON.parse(text) : text;
+}
+
+// OpenAI 兼容协议（ChatGPT / DeepSeek / 通义千问 / Kimi / 智谱 等）。
+// 结构化输出不用各家不一的 response_format，而是把 JSON 规格写进系统提示 + 兜底抽取，
+// 这样对所有兼容服务商都稳。
+async function callOpenAICompatible(systemPrompt, userText, schema, maxTokens = 2048) {
+  const url = aiEndpoint();
+  if (!url) throw new Error("未填写 API 地址（自定义服务商需在设置里填 Base URL）");
+  let system = systemPrompt;
+  if (schema) {
+    system += "\n\n【输出要求】只输出一个 JSON 对象，不要任何解释、前后缀或 Markdown 代码块。JSON 严格符合以下结构：\n" + schemaHint(schema);
+  }
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      Authorization: "Bearer " + (state.settings.aiApiKey || "").trim()
+    },
+    body: JSON.stringify({
+      model: state.settings.aiModel || aiProviderConf().models[0] || "",
+      max_tokens: maxTokens,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: userText }
+      ]
+    })
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => null);
+    throw new Error(err?.error?.message || err?.message || `HTTP ${response.status}`);
+  }
+  const data = await response.json();
+  const text = data.choices?.[0]?.message?.content || "";
+  return schema ? extractJson(text) : text;
+}
+
+// 从模型回复里稳健抽出 JSON（去掉 ```json 围栏、截取首个 { 到末个 }）
+function extractJson(text) {
+  let t = String(text || "").trim();
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) t = fence[1].trim();
+  const start = t.indexOf("{");
+  const end = t.lastIndexOf("}");
+  if (start !== -1 && end !== -1 && end > start) t = t.slice(start, end + 1);
+  return JSON.parse(t);
+}
+
+// 把 JSON Schema 转成给模型看的简明字段说明（供不支持原生结构化输出的服务商使用）
+function schemaHint(schema, indent = "") {
+  if (!schema || schema.type !== "object" || !schema.properties) return "";
+  const req = schema.required || [];
+  return Object.entries(schema.properties)
+    .map(([k, v]) => {
+      let t = v.enum ? "取值之一 [" + v.enum.join(", ") + "]" : v.type || "";
+      let line = `${indent}- ${k} (${t})${req.includes(k) ? "" : "（可选）"}${v.description ? "：" + v.description : ""}`;
+      if (v.type === "object" && v.properties) line += "\n" + schemaHint(v, indent + "  ");
+      if (v.type === "array" && v.items) line += `\n${indent}  · 数组每项：\n` + schemaHint(v.items, indent + "    ");
+      return line;
+    })
+    .join("\n");
 }
 
 const AI_ANALYSIS_SCHEMA = {
@@ -4521,7 +4723,7 @@ async function analyzeConversationAI(prospectId) {
 对话记录（旧→新）:
 ${transcript}`;
 
-  return callClaude(system, user, AI_ANALYSIS_SCHEMA, 1500);
+  return callAI(system, user, AI_ANALYSIS_SCHEMA, 1500);
 }
 
 async function enrichInboundWithAI(prospectId, force = false) {
@@ -4738,7 +4940,7 @@ async function enrichContactAI(prospectId, quiet = false) {
 市场: ${prospect.market}
 我方要开发的客户类型: ${state.campaign.customerType}
 我方产品: ${state.campaign.product}`;
-      const data = await callClaude(system, user, AI_CONTACT_SCHEMA, 900);
+      const data = await callAI(system, user, AI_CONTACT_SCHEMA, 900);
       applyContact(prospectId, data, "claude");
       if (!quiet) addLog(`Claude 推测联系人与候选邮箱：${prospect.company}（匹配度 ${data.fit_score}%）`);
       saveState();
@@ -4851,8 +5053,12 @@ function prospectFromFound(item, fallbackMarket, sourceLabel = "Claude 联网") 
 }
 
 async function webSearchProspects(opts = {}) {
-  if (!aiEnabled()) {
-    showAiSetup("联网找客户需要先配置 Claude API：请填入 Anthropic API Key 后点击「测试连接」");
+  if (!aiWebSearchCapable()) {
+    if (aiEnabled()) {
+      addLog("「联网找客户」目前仅 Claude 支持（用其内置联网搜索）；当前服务商无法联网，请改用粘贴导入或切到 Claude");
+      return 0;
+    }
+    showAiSetup("联网找客户需要先配置支持联网的 AI 引擎（Claude）：填入 API Key 后点「测试连接」");
     return 0;
   }
   const count = opts.count || 12;
@@ -4948,8 +5154,12 @@ async function reverseCompetitorChannel(url) {
     addLog("请先粘贴一个完整的竞品经销商/Where-to-buy 页面链接（http/https 开头）");
     return 0;
   }
-  if (!aiEnabled()) {
-    showAiSetup("竞品渠道反查需要先配置 Claude API：请填入 Anthropic API Key 后点击「测试连接」");
+  if (!aiWebSearchCapable()) {
+    if (aiEnabled()) {
+      addLog("「竞品渠道反查」需联网抓取页面，目前仅 Claude 支持；请切到 Claude 或手动粘贴经销商列表");
+      return 0;
+    }
+    showAiSetup("竞品渠道反查需要先配置支持联网的 AI 引擎（Claude）：填入 API Key 后点「测试连接」");
     return 0;
   }
   addLog(`Claude 正在联网反查竞品经销商：${url.trim()}…`);
@@ -4975,8 +5185,12 @@ async function reverseCompetitorChannel(url) {
 async function deepDigContact(prospectId, quiet = false) {
   const prospect = state.prospects.find((p) => p.id === prospectId);
   if (!prospect) return "none";
-  if (!aiEnabled()) {
-    if (!quiet) showAiSetup("官网深挖联系人需要先配置 Claude API：请填入 Anthropic API Key 后点击「测试连接」");
+  if (!aiWebSearchCapable()) {
+    if (aiEnabled()) {
+      if (!quiet) addLog("「官网深挖联系人」需联网翻官网，目前仅 Claude 支持；可改用「AI 找联系人」（当前模型支持）或切到 Claude");
+      return "none";
+    }
+    if (!quiet) showAiSetup("官网深挖联系人需要先配置支持联网的 AI 引擎（Claude）：填入 API Key 后点「测试连接」");
     return "none";
   }
   if (!quiet) {
@@ -5064,7 +5278,7 @@ async function generateSequenceAI() {
 联系人: ${prospect.contactName}（${prospect.role}）
 网站: ${prospect.website}
 采购信号: ${prospect.buyingSignal}`;
-    const result = await callClaude(system, user, AI_SEQUENCE_SCHEMA, 3000);
+    const result = await callAI(system, user, AI_SEQUENCE_SCHEMA, 3000);
     state.sequence = (result.emails || []).slice(0, 6).map((email) => ({
       id: makeId("email"),
       label: email.label,
@@ -5092,40 +5306,60 @@ async function testAiEngineConnection() {
   statusEl.className = "webhook-status pending";
   statusEl.textContent = "测试中…";
   const start = Date.now();
+  const name = aiProviderConf().label;
   try {
-    await callClaude("只回复两个字：正常", "连通性测试", null, 16);
+    await callAI("只回复两个字：正常", "连通性测试", null, 16);
     statusEl.className = "webhook-status ok";
     statusEl.textContent = `正常 · ${state.settings.aiModel} · ${Date.now() - start}ms`;
-    addLog(`Claude API 连接成功（${state.settings.aiModel}）`);
+    addLog(`${name} 连接成功（${state.settings.aiModel}）`);
   } catch (error) {
     statusEl.className = "webhook-status fail";
     statusEl.textContent = `失败 · ${error.message.slice(0, 40)}`;
-    addLog(`Claude API 连接失败：${error.message}`);
+    addLog(`${name} 连接失败：${error.message}${aiProviderId() !== "anthropic" ? "（若报 CORS/跨域，多为浏览器限制，改用桌面版或经 n8n 代理）" : ""}`);
   }
   saveState();
   updateAiEngineButtons();
 }
 
-function updateAiEngineButtons() {
-  const engine = state.settings.aiEngine || "local";
-  const enabled = aiEnabled();
-  elements.aiLocalMode.classList.toggle("is-active", engine === "local");
-  elements.aiClaudeMode.classList.toggle("is-active", engine === "claude");
-  elements.aiEngineStatus.textContent = enabled
-    ? `Claude · ${state.settings.aiModel}`
-    : engine === "claude"
-      ? "Claude（未配置 Key）"
-      : "本地规则";
+// 服务商切换：填好默认地址提示、重置模型为该服务商默认、显示/隐藏自定义 Base URL
+function applyAiProviderToForm() {
+  const conf = aiProviderConf();
+  if (elements.aiApiKeyInput) elements.aiApiKeyInput.placeholder = conf.keyHint;
+  if (elements.aiModelList) {
+    elements.aiModelList.innerHTML = conf.models.map((m) => `<option value="${m}"></option>`).join("");
+  }
+  if (elements.aiBaseUrlRow) elements.aiBaseUrlRow.style.display = aiProviderId() === "custom" ? "" : "none";
+  const cloudOn = state.settings.aiEngine === "cloud" || state.settings.aiEngine === "claude";
+  if (elements.aiCloudRow) elements.aiCloudRow.style.display = cloudOn ? "" : "none";
+}
 
+function updateAiEngineButtons() {
+  const engine = state.settings.aiEngine === "claude" ? "cloud" : state.settings.aiEngine || "local";
+  const enabled = aiEnabled();
+  const conf = aiProviderConf();
+  if (elements.aiLocalMode) elements.aiLocalMode.classList.toggle("is-active", engine === "local");
+  if (elements.aiCloudMode) elements.aiCloudMode.classList.toggle("is-active", engine === "cloud");
+  if (elements.aiProviderSelect) elements.aiProviderSelect.value = aiProviderId();
+  elements.aiEngineStatus.textContent = enabled
+    ? `${conf.label} · ${state.settings.aiModel}`
+    : engine === "cloud"
+      ? `${conf.label}（未配置 Key）`
+      : "本地规则";
+  if (elements.aiCloudRow) elements.aiCloudRow.style.display = engine === "cloud" ? "" : "none";
+  if (elements.aiBaseUrlRow) elements.aiBaseUrlRow.style.display = aiProviderId() === "custom" ? "" : "none";
+
+  // 联网类功能仅 Claude 可用；其余模型下按钮标注但仍可点（会走本地兜底）
+  const webCap = aiWebSearchCapable();
   [
-    [elements.webSearchFind, "Claude 联网找客户", "配置 Claude 后联网找客户"],
-    [elements.reverseCompetitor, "反查经销商", "配置 Claude 后反查"],
-    [elements.aiWriteEmail, "Claude 深度写信", "配置 Claude 后深度写信"]
-  ].forEach(([button, readyLabel, setupLabel]) => {
+    [elements.webSearchFind, "联网找客户", "配置 Claude 后联网找客户", true],
+    [elements.reverseCompetitor, "反查经销商", "配置 Claude 后反查", true],
+    [elements.aiWriteEmail, "AI 深度写信", "配置 AI 引擎后深度写信", false]
+  ].forEach(([button, readyLabel, setupLabel, needsWeb]) => {
     if (!button) return;
-    button.classList.toggle("needs-config", !enabled);
+    const ok = needsWeb ? webCap : enabled;
+    button.classList.toggle("needs-config", !ok);
     const label = button.querySelector("span");
-    if (label) label.textContent = enabled ? readyLabel : setupLabel;
+    if (label) label.textContent = ok ? readyLabel : setupLabel;
   });
 }
 
@@ -5215,7 +5449,7 @@ async function parseAgentTask() {
   if (aiEnabled()) {
     elements.agentEngineTag.textContent = "Claude 解析中…";
     try {
-      parsed = await callClaude(
+      parsed = await callAI(
         "你是外贸获客任务解析器。把用户的一句话客户开发需求解析为结构化任务。markets 必须是英文国家/地区名；keywords 用英文并扩展同义词与当地行业术语；未提及的条件给合理默认值。",
         prompt,
         AGENT_TASK_SCHEMA,
@@ -5672,7 +5906,7 @@ async function generateAutoReply(prospect, customerText, intentKey) {
 署名: ${state.campaign.senderName}
 
 客户来信: ${customerText}`;
-      const text = await callClaude(system, user, null, 700);
+      const text = await callAI(system, user, null, 700);
       if (text) return text.trim();
     } catch (error) {
       addLog(`Claude 自动应答失败，改用模板：${error.message}`);
@@ -7194,6 +7428,8 @@ function updateModeButtons() {
 function navigateTo(view) {
   elements.navTabs.forEach((item) => item.classList.toggle("is-active", item.dataset.view === view));
   elements.views.forEach((item) => item.classList.toggle("is-active", item.id === `${view}View`));
+  // 切换到某视图时才渲染它——它在隐藏期间没有跟随 render() 更新
+  render();
 }
 
 elements.navTabs.forEach((tab) => {
@@ -7887,21 +8123,44 @@ elements.agentSaveKb.addEventListener("click", () => {
   renderLogs();
 });
 
-[elements.aiLocalMode, elements.aiClaudeMode].forEach((button) => {
+[elements.aiLocalMode, elements.aiCloudMode].forEach((button) => {
+  if (!button) return;
   button.addEventListener("click", () => {
     readSettingsFromForm();
-    state.settings.aiEngine = button.dataset.aiEngine;
+    state.settings.aiEngine = button.dataset.aiEngine; // local | cloud
+    applyAiProviderToForm();
     saveState();
     updateAiEngineButtons();
     addLog(
-      state.settings.aiEngine === "claude"
+      state.settings.aiEngine === "cloud"
         ? aiEnabled()
-          ? "AI 引擎已切换为 Claude API"
-          : "AI 引擎已切换为 Claude API（请填入 API Key 并点「测试连接」）"
+          ? `AI 引擎已切换为云端大模型（${aiProviderConf().label}）`
+          : `AI 引擎已切换为云端大模型（${aiProviderConf().label}）——请填 API Key 并点「测试连接」`
         : "AI 引擎已切换为本地规则"
     );
     renderLogs();
   });
+});
+
+// 服务商切换：重置模型为该服务商默认、刷新地址提示/自定义 Base URL 显隐
+elements.aiProviderSelect?.addEventListener("change", () => {
+  readSettingsFromForm();
+  const conf = aiProviderConf();
+  // 换服务商后原模型名多半不适用，若非自定义则回落到该商默认模型
+  if (aiProviderId() !== "custom" && !conf.models.includes(state.settings.aiModel)) {
+    state.settings.aiModel = conf.models[0] || "";
+    if (elements.aiModelSelect) elements.aiModelSelect.value = state.settings.aiModel;
+  }
+  applyAiProviderToForm();
+  saveState();
+  updateAiEngineButtons();
+  addLog(`已选择 AI 服务商：${conf.label}`);
+  renderLogs();
+});
+
+elements.aiBaseUrlInput?.addEventListener("change", () => {
+  readSettingsFromForm();
+  saveState();
 });
 
 document.addEventListener("keydown", (event) => {

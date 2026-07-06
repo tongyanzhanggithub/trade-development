@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>自动化外贸开发系统</title>
     <link rel="icon" type="image/png" href="./favicon.png" />
-    <link rel="stylesheet" href="./styles.css?v=37" />
+    <link rel="stylesheet" href="./styles.css?v=c4fe2359" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
@@ -1117,26 +1117,42 @@
               </div>
               <div class="segmented" role="group" aria-label="AI 引擎">
                 <button class="segment is-active" id="aiLocalMode" data-ai-engine="local" type="button">本地规则</button>
-                <button class="segment" id="aiClaudeMode" data-ai-engine="claude" type="button">Claude API</button>
+                <button class="segment" id="aiCloudMode" data-ai-engine="cloud" type="button">云端大模型</button>
               </div>
-              <label>
-                <span>Anthropic API Key（仅存本机浏览器）</span>
-                <input id="aiApiKeyInput" type="password" placeholder="sk-ant-..." autocomplete="off" />
-              </label>
-              <label>
-                <span>模型</span>
-                <select id="aiModelSelect">
-                  <option value="claude-opus-4-8">Claude Opus 4.8（推荐·最强）</option>
-                  <option value="claude-sonnet-5">Claude Sonnet 5（均衡）</option>
-                  <option value="claude-haiku-4-5">Claude Haiku 4.5（快·省）</option>
-                </select>
-              </label>
+              <div id="aiCloudRow" style="display:none">
+                <label>
+                  <span>服务商</span>
+                  <select id="aiProviderSelect">
+                    <option value="deepseek">DeepSeek 深度求索（最省 ≈¥14/月）</option>
+                    <option value="qwen">通义千问 Qwen（省·国内快）</option>
+                    <option value="kimi">Kimi Moonshot（国内）</option>
+                    <option value="zhipu">智谱 GLM（国内）</option>
+                    <option value="openai">OpenAI ChatGPT（较贵）</option>
+                    <option value="anthropic">Claude（最强·联网找客户专用·较贵）</option>
+                    <option value="custom">自定义（OpenAI 兼容）</option>
+                  </select>
+                </label>
+                <label>
+                  <span>API Key（仅存本机浏览器）</span>
+                  <input id="aiApiKeyInput" type="password" placeholder="sk-ant-..." autocomplete="off" />
+                </label>
+                <label id="aiBaseUrlRow" style="display:none">
+                  <span>API 地址 Base URL（自定义服务商，填 /chat/completions 全路径）</span>
+                  <input id="aiBaseUrlInput" type="text" placeholder="https://你的服务/v1/chat/completions" autocomplete="off" />
+                </label>
+                <label>
+                  <span>模型</span>
+                  <input id="aiModelSelect" list="aiModelList" placeholder="模型名，如 gpt-4o / deepseek-chat" autocomplete="off" />
+                  <datalist id="aiModelList"></datalist>
+                </label>
+              </div>
               <div class="connector-foot">
                 <button class="ghost-button" id="testAiEngine" type="button">测试连接</button>
                 <span class="webhook-status" id="aiEngineTestStatus">未测试</span>
               </div>
               <p class="connector-hint">
-                切换到 Claude API 后：意图识别、回复建议、对话摘要、深度个性化写信由真实大模型完成；未配置或调用失败时自动降级为本地规则。
+                云端大模型支持 Claude、ChatGPT 及国产大模型（DeepSeek / 通义千问 / Kimi / 智谱 GLM 等，走 OpenAI 兼容接口）。意图识别、回复建议、摘要、深度写信由所选模型完成；未配置或失败时自动降级本地规则。<br />
+                💡 省钱建议：日常跑量用 <b>DeepSeek</b>（同样量约 ¥14/月，是 Opus 的 1/20）；只在需要「联网找客户 / 官网深挖」时另挂一个 <b>Claude</b> Key 按次用。两者可随时切换、互不影响。
               </p>
             </section>
           </div>
@@ -1201,11 +1217,11 @@
 
     <div class="toast-stack" id="toastStack" aria-live="polite"></div>
 
-    <script src="./app.js?v=37" defer></script>
+    <script src="./app.js?v=c4fe2359" defer></script>
     <script>
       // 缓存哨兵：若浏览器仍加载旧版 app.js（版本不匹配或加载失败导致按钮失灵），给出明确提示
       window.addEventListener("load", () => {
-        if (window.__APP_V !== "37") {
+        if (window.__APP_V !== "c4fe2359") {
           const tip = document.createElement("div");
           tip.style.cssText =
             "position:fixed;top:0;left:0;right:0;z-index:9999;padding:12px 16px;background:#c2410c;color:#fff;font-size:14px;text-align:center;font-weight:700;";

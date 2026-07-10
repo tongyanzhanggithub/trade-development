@@ -1,4 +1,4 @@
-window.__APP_V = "d7673db7";
+window.__APP_V = "b2385d7c";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -6993,6 +6993,34 @@ function emailLooksVerified(prospect, email) {
 }
 
 // 发送预检：返回 { blockers:[], warnings:[], ok }。blockers 阻止发送，warnings 仅提示
+// 垃圾词预检：高信号、低误报——避开外贸常用词，只揪真正拉低到达率的表达/排版
+function spamFlags(subject, body) {
+  const text = `${subject || ""} ${body || ""}`;
+  const flags = [];
+  const patterns = [
+    [/\bguarante?ed?\b/i, "guarantee"],
+    [/\bact now\b/i, "act now"],
+    [/\bclick here\b/i, "click here"],
+    [/\bbuy now\b/i, "buy now"],
+    [/\brisk[-\s]?free\b/i, "risk-free"],
+    [/\blimited[-\s]time\b/i, "limited time"],
+    [/\bcredit card\b/i, "credit card"],
+    [/\bwinner\b/i, "winner"],
+    [/\bcongratulations\b/i, "congratulations"],
+    [/100%\s*(free|guarantee)/i, "100% free/guarantee"],
+    [/\$\$\$|\$\d{4,}/, "$$$"]
+  ];
+  patterns.forEach(([re, label]) => {
+    if (re.test(text)) flags.push(label);
+  });
+  if (/!{2,}/.test(text)) flags.push("连续感叹号");
+  // 全大写词（排除外贸/认证常用缩写，避免误报）
+  const CAPS_OK = /^(FOB|CIF|CFR|EXW|MOQ|OEM|ODM|SONCAP|IATF|ISO|USD|EUR|CBM|HS|CE|FCC|CCC|LCL|FCL|PI|LC|TT|RFQ|OK)$/;
+  const capsWords = (text.match(/\b[A-Z]{4,}\b/g) || []).filter((w) => !CAPS_OK.test(w));
+  if (capsWords.length >= 2) flags.push("多个全大写词");
+  return flags;
+}
+
 function preflightOutboxItem(item) {
   const prospect = state.prospects.find((p) => p.id === item.prospectId);
   const blockers = [];
@@ -7003,6 +7031,8 @@ function preflightOutboxItem(item) {
   else if (prospect && !emailLooksVerified(prospect, item.email)) warnings.push("邮箱为推测未验证（退信伤发信域名，建议先验证）");
   const sensitive = sensitiveTopic(`${item.subject || ""} ${item.body || ""}`);
   if (sensitive) warnings.push(`含敏感话题：${sensitive}`);
+  const spam = spamFlags(item.subject, item.body);
+  if (spam.length) warnings.push(`易进垃圾箱（${spam.slice(0, 3).join("、")}${spam.length > 3 ? "…" : ""}），建议改写`);
   const dup = state.outbox.some(
     (o) =>
       o.id !== item.id &&

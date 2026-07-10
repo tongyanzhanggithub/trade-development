@@ -1,4 +1,4 @@
-window.__APP_V = "13c3d25e";
+window.__APP_V = "5b3ebabf";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -199,6 +199,10 @@ const elements = {
   sendDueBtn: $("#sendDueBtn"),
   toastStack: $("#toastStack"),
   onboardingChecklist: $("#onboardingChecklist"),
+  welcomeOverlay: $("#welcomeOverlay"),
+  welcomeDemo: $("#welcomeDemo"),
+  welcomeStart: $("#welcomeStart"),
+  welcomeLater: $("#welcomeLater"),
   openPaletteBtn: $("#openPaletteBtn"),
   themeToggle: $("#themeToggle"),
   paletteOverlay: $("#paletteOverlay"),
@@ -8437,9 +8441,53 @@ window.addEventListener("storage", (event) => {
   }
 })();
 
+// ---------- 首次欢迎向导：新用户一进来给两条明路（先看演示 / 直接开始）----------
+function closeWelcome() {
+  if (elements.welcomeOverlay) elements.welcomeOverlay.hidden = true;
+  state.ui = { ...(state.ui || {}), welcomeSeen: true };
+  saveState();
+}
+if (elements.welcomeLater) elements.welcomeLater.addEventListener("click", closeWelcome);
+if (elements.welcomeStart) {
+  elements.welcomeStart.addEventListener("click", () => {
+    closeWelcome();
+    navigateTo("dashboard");
+    elements.productInput?.focus();
+  });
+}
+if (elements.welcomeDemo) {
+  elements.welcomeDemo.addEventListener("click", () => {
+    closeWelcome();
+    // 表单为空时填一组示例（重庆摩配打美国/尼日利亚），让演示更真实
+    if (elements.productInput && !elements.productInput.value.trim()) {
+      elements.productInput.value = "motorcycle parts (CG125/GN125)";
+      if (elements.marketsInput) elements.marketsInput.value = "United States, Nigeria";
+      if (elements.valuePropsInput && !elements.valuePropsInput.value.trim()) {
+        elements.valuePropsInput.value = "Chongqing supply chain, OEM level, container mixing, SONCAP";
+      }
+    }
+    navigateTo("dashboard");
+    // 复用「一键起量」：未配 AI 时会用演示数据铺线索并跑通到发信队列
+    if (elements.oneClickPipeline) {
+      runAsyncButton(elements.oneClickPipeline, "起量中…", () => runOneClickPipeline());
+    }
+  });
+}
+// 点背景空白处也可关闭
+if (elements.welcomeOverlay) {
+  elements.welcomeOverlay.addEventListener("click", (event) => {
+    if (event.target === elements.welcomeOverlay) closeWelcome();
+  });
+}
+
 // 首次渲染（放在文件末尾，确保 render 依赖的所有模块级 const 已初始化）
 render();
 if (stateNeedsInitialSave) {
   saveState();
   stateNeedsInitialSave = false;
+}
+
+// 全新用户（没看过向导、也还没有线索）→ 弹欢迎向导
+if (!state.ui?.welcomeSeen && !state.prospects.length && elements.welcomeOverlay) {
+  elements.welcomeOverlay.hidden = false;
 }

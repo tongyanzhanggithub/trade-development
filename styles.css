@@ -3434,3 +3434,61 @@ body.dark .backup-overdue {
   text-decoration: underline;
   color: inherit;
 }
+
+/* 今日待办工作台 */
+.todo-panel {
+  padding: 14px 18px;
+  margin-bottom: 16px;
+}
+.todo-panel:empty {
+  display: none;
+}
+.todo-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.todo-head strong {
+  font-size: 15px;
+}
+.todo-count {
+  font-size: 12px;
+  opacity: 0.6;
+}
+.todo-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 0;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+.todo-row:first-of-type {
+  border-top: none;
+}
+.todo-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+.todo-label svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  fill: none;
+  opacity: 0.7;
+  flex: none;
+}
+.todo-act {
+  flex: none;
+}
+.todo-empty {
+  font-size: 13px;
+  opacity: 0.7;
+  padding: 2px 0;
+}
+body.dark .todo-row {
+  border-top-color: rgba(255, 255, 255, 0.08);
+}

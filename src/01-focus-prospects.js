@@ -196,7 +196,7 @@ function readSettingsFromForm() {
 // 每个视图对应的渲染函数。render() 只重建当前可见视图，隐藏视图在
 // navigateTo 切过去时才渲染——避免每次操作都重建全部 12 个视图的 innerHTML。
 const VIEW_RENDERERS = {
-  dashboard: [renderMetrics, renderWorkflow, renderTopProspects, renderChecklist],
+  dashboard: [renderTodo, renderMetrics, renderWorkflow, renderTopProspects, renderChecklist],
   agent: [renderAgent],
   discovery: [renderQueries],
   prospects: [renderProspects, renderProspectDetail],

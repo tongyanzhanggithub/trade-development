@@ -1,4 +1,4 @@
-window.__APP_V = "5b3ebabf";
+window.__APP_V = "17a62036";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -199,6 +199,7 @@ const elements = {
   sendDueBtn: $("#sendDueBtn"),
   toastStack: $("#toastStack"),
   onboardingChecklist: $("#onboardingChecklist"),
+  todoPanel: $("#todoPanel"),
   welcomeOverlay: $("#welcomeOverlay"),
   welcomeDemo: $("#welcomeDemo"),
   welcomeStart: $("#welcomeStart"),
@@ -879,7 +880,7 @@ function readSettingsFromForm() {
 // 每个视图对应的渲染函数。render() 只重建当前可见视图，隐藏视图在
 // navigateTo 切过去时才渲染——避免每次操作都重建全部 12 个视图的 innerHTML。
 const VIEW_RENDERERS = {
-  dashboard: [renderMetrics, renderWorkflow, renderTopProspects, renderChecklist],
+  dashboard: [renderTodo, renderMetrics, renderWorkflow, renderTopProspects, renderChecklist],
   agent: [renderAgent],
   discovery: [renderQueries],
   prospects: [renderProspects, renderProspectDetail],
@@ -4160,6 +4161,41 @@ function renderNavBadges() {
     }
     badge.textContent = count > 99 ? "99+" : String(count);
   });
+}
+
+// 今日待办：把每天要处理的事（待审批 / 到期发送 / 新回复 / 到期跟进 / Agent 待审批）聚成一屏，一键直达
+function renderTodo() {
+  const host = elements.todoPanel;
+  if (!host) return;
+  const today = dateOffset(0);
+  const agentPending = (state.agent?.approvals || []).filter((a) => a.status === "pending").length;
+  const pendingApproval = state.outbox.filter((i) => i.status === "待审批").length;
+  const dueSend = state.outbox.filter((i) => i.status === "待发送" && i.dueDate <= today).length;
+  const unread = state.inbound.filter((m) => !m.read).length;
+  const dueFollow = dueFollowupProspects().length;
+
+  const rows = [];
+  if (agentPending) rows.push(["robot", `${agentPending} 个 Agent 客户待审批`, `data-goto="agent"`, "去处理"]);
+  if (pendingApproval) rows.push(["mail", `${pendingApproval} 封邮件待审批`, `data-goto="automation"`, "去审批"]);
+  if (dueSend) rows.push(["zap", `${dueSend} 封已批准邮件到期待发`, `data-goto="automation"`, "去发送"]);
+  if (unread) rows.push(["inbox", `${unread} 条新回复待处理`, `data-goto="inbox"`, "去收件箱"]);
+  if (dueFollow) rows.push(["shuffle", `${dueFollow} 位客户到期未回复`, `data-todo="followup"`, "一键批量跟进"]);
+
+  if (!rows.length) {
+    host.innerHTML = `<div class="todo-empty">✅ 今日暂无待办。保持每天到收件箱点「拉取回复」，有新回信会自动出现在这里。</div>`;
+    return;
+  }
+  host.innerHTML =
+    `<div class="todo-head"><strong>今日待办</strong><span class="todo-count">${rows.length} 项</span></div>` +
+    rows
+      .map(
+        ([icon, label, action, btn]) => `
+        <div class="todo-row">
+          <span class="todo-label"><svg><use href="#icon-${icon}" /></svg>${label}</span>
+          <button class="ghost-button todo-act" ${action} type="button"><span>${btn}</span></button>
+        </div>`
+      )
+      .join("");
 }
 
 function renderChecklist() {
@@ -7454,6 +7490,12 @@ document.addEventListener("click", (event) => {
   const gotoTarget = event.target.closest("[data-goto]");
   if (gotoTarget) {
     navigateTo(gotoTarget.dataset.goto);
+    return;
+  }
+  // 今日待办：一键批量跟进
+  const todoTarget = event.target.closest("[data-todo]");
+  if (todoTarget) {
+    if (todoTarget.dataset.todo === "followup") queueDueFollowups();
     return;
   }
   if (event.target.closest("[data-checklist-dismiss]")) {

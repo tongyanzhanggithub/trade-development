@@ -199,6 +199,7 @@ const elements = {
   sendDueBtn: $("#sendDueBtn"),
   toastStack: $("#toastStack"),
   onboardingChecklist: $("#onboardingChecklist"),
+  todoPanel: $("#todoPanel"),
   welcomeOverlay: $("#welcomeOverlay"),
   welcomeDemo: $("#welcomeDemo"),
   welcomeStart: $("#welcomeStart"),

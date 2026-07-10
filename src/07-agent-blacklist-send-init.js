@@ -1685,6 +1685,12 @@ document.addEventListener("click", (event) => {
     navigateTo(gotoTarget.dataset.goto);
     return;
   }
+  // 今日待办：一键批量跟进
+  const todoTarget = event.target.closest("[data-todo]");
+  if (todoTarget) {
+    if (todoTarget.dataset.todo === "followup") queueDueFollowups();
+    return;
+  }
   if (event.target.closest("[data-checklist-dismiss]")) {
     state.ui = { ...(state.ui || {}), checklistDismissed: true };
     saveState();

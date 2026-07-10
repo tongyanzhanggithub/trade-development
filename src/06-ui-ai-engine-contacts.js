@@ -493,6 +493,21 @@ function getStoredAI(prospectId) {
   return [...state.inbound].reverse().find((m) => m.prospectId === prospectId && m.ai)?.ai || null;
 }
 
+// 把当前活动里对 AI 最有用的上下文汇成几行，喂给写信/回复提示词，让输出更贴产品、更准确
+function campaignContextLines() {
+  const c = state.campaign;
+  const terms = (c.productTerms || []).filter(Boolean);
+  const lines = [];
+  if (c.focusProduct) lines.push(`具体产品聚焦: ${c.focusProduct}`);
+  if (terms.length > 1) lines.push(`英文术语/同义词: ${terms.join(", ")}`);
+  if (c.hsCode) lines.push(`HS 编码: ${c.hsCode}`);
+  if (c.buyerHint) lines.push(`目标买家画像: ${c.buyerHint}`);
+  if (c.customerType) lines.push(`客户类型: ${c.customerType}`);
+  const kb = (c.knowledgeBase || "").trim();
+  if (kb) lines.push(`产品知识库/FAQ（回答客户问题、写卖点时以此为准，不要编造）:\n${kb.slice(0, 1200)}`);
+  return lines.join("\n");
+}
+
 async function analyzeConversationAI(prospectId) {
   const conversation = buildConversations().find((c) => c.prospectId === prospectId);
   const prospect = state.prospects.find((p) => p.id === prospectId);
@@ -510,10 +525,11 @@ async function analyzeConversationAI(prospectId) {
 
   const system =
     "你是资深外贸业务与风控助手。根据对话判断客户最新意图并起草回复，同时识别来信中的风险事项（付款风险如先货后款/纯账期/无定金、疑似诈骗如大额急单+异地收货+第三方货代、制裁合规如受限地区/再出口、知识产权如仿制贴牌、利润风险如目标价远低于成本、样品滥用等），没有风险则 risks 为空数组。suggested_reply 必须是英文、专业、简洁、可直接发送；其余字段用中文。";
+  const ctx = campaignContextLines();
   const user = `我方产品: ${state.campaign.product}
 卖点: ${state.campaign.valueProps}
 认证: ${state.campaign.certifications}
-署名: ${state.campaign.senderName}, ${state.campaign.companyName}
+署名: ${state.campaign.senderName}, ${state.campaign.companyName}${ctx ? "\n" + ctx : ""}
 客户: ${prospect.company}（${prospect.market}，联系人 ${prospect.contactName}）
 
 对话记录（旧→新）:
@@ -1064,11 +1080,12 @@ async function generateSequenceAI() {
   addLog(`Claude 正在为 ${prospect.company} 深度写信…`);
   try {
     const system =
-      "你是顶尖外贸开发信专家。为指定客户写一套 4 封开发信序列（D0 首触 / D3 跟进 / D7 案例或样品 / D14 收尾）。每封 90-140 词，围绕该客户的业务与市场个性化切入，避免模板腔与夸张营销语。label 用中文。语言规则：按客户市场的商务语言写正文——拉美用西班牙语（巴西用葡萄牙语）、法语区非洲用法语、中东可英语正文+阿语问候；首封在正文下附简短英文版本；其他市场用英文。";
+      "你是顶尖外贸开发信专家。为指定客户写一套 4 封开发信序列（D0 首触 / D3 跟进 / D7 案例或样品 / D14 收尾）。每封 90-140 词，围绕该客户的业务与市场个性化切入，避免模板腔与夸张营销语。若给了「具体产品聚焦/英文术语」，主题与正文要点名这个具体产品（用英文行业叫法），而非泛泛的品类；卖点与能力只能用给定的知识库/卖点，不要编造参数。label 用中文。语言规则：按客户市场的商务语言写正文——拉美用西班牙语（巴西用葡萄牙语）、法语区非洲用法语、中东可英语正文+阿语问候；首封在正文下附简短英文版本；其他市场用英文。";
+    const ctx = campaignContextLines();
     const user = `产品: ${state.campaign.product}
 卖点: ${state.campaign.valueProps}
 认证: ${state.campaign.certifications}
-署名: ${state.campaign.senderName}, ${state.campaign.companyName}
+署名: ${state.campaign.senderName}, ${state.campaign.companyName}${ctx ? "\n" + ctx : ""}
 客户: ${prospect.company}
 市场: ${prospect.market}
 联系人: ${prospect.contactName}（${prospect.role}）

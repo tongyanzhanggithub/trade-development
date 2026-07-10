@@ -1,4 +1,4 @@
-window.__APP_V = "bc632387";
+window.__APP_V = "15e890e6";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -1391,6 +1391,7 @@ function renderOutbox() {
           <span>
             <strong>${escapeHtml(item.company)} · ${escapeHtml(item.label)}</strong>
             <span>${escapeHtml(item.email || "（缺邮箱）")} · ${item.dueDate} · ${escapeHtml(item.subject)}</span>
+            ${selectable ? sendTimingBadge(item) : ""}
           </span>
           <span class="outbox-status">${selectable ? preflightBadge(item) : ""}<span class="badge">${escapeHtml(item.status)}</span></span>
         </article>
@@ -4279,6 +4280,19 @@ async function callWebhook(name, payload) {
     recordWebhook(name, { url: "", ok: false, note: "未配置 URL" });
     return { ok: false, skipped: true };
   }
+  // 发信 payload 附带发送时机：n8n 可按 suggested_window_beijing 定时投递（客户当地上午 9-11 点）
+  if (name === "send" && Array.isArray(payload?.emails)) {
+    payload = {
+      ...payload,
+      emails: payload.emails.map((e) => {
+        const prospect = state.prospects.find((p) => p.id === e.prospectId);
+        const t = sendTimingFor(prospect?.market);
+        return t
+          ? { ...e, recipient_utc_offset: t.offset, recipient_local_time: t.localTime, suggested_window_beijing: t.windowBJ }
+          : e;
+      })
+    };
+  }
   const start = Date.now();
   try {
     const response = await fetch(url, {
@@ -4723,6 +4737,72 @@ function renderChecklist() {
       </div>
     </div>
   `;
+}
+
+/* ---------- 发送时机：按客户市场时区算最佳发送窗口（当地上午 9-11 点） ---------- */
+
+// 市场 → 大致 UTC 偏移（代表性时区，不处理夏令时，够指导发送时段即可）
+const MARKET_TZ = [
+  [/united states|usa|america|estados unidos/i, -5, "美东"],
+  [/canada/i, -5, ""],
+  [/mexico/i, -6, ""],
+  [/brazil|brasil/i, -3, ""],
+  [/argentina/i, -3, ""],
+  [/chile/i, -4, ""],
+  [/colombia|peru|ecuador/i, -5, ""],
+  [/united kingdom|uk|england|britain|ireland|portugal|ghana/i, 0, ""],
+  [/germany|france|spain|italy|netherlands|belgium|poland|sweden|norway|denmark|switzerland|austria|czech|morocco|algeria|nigeria/i, 1, ""],
+  [/greece|romania|finland|egypt|south africa|israel/i, 2, ""],
+  [/turkey|russia|saudi|qatar|kuwait|bahrain|kenya|ethiopia|tanzania|iraq/i, 3, ""],
+  [/uae|united arab emirates|dubai|oman/i, 4, ""],
+  [/pakistan/i, 5, ""],
+  [/india|sri lanka/i, 5.5, ""],
+  [/bangladesh/i, 6, ""],
+  [/indonesia|vietnam|thailand|cambodia/i, 7, ""],
+  [/philippines|malaysia|singapore/i, 8, ""],
+  [/japan|korea/i, 9, ""],
+  [/australia/i, 10, "悉尼"],
+  [/new zealand/i, 12, ""]
+];
+
+function marketUtcOffset(market) {
+  const m = String(market || "");
+  for (const [re, offset, note] of MARKET_TZ) {
+    if (re.test(m)) return { offset, note };
+  }
+  return null;
+}
+
+// 返回该市场的发送时机信息；未知市场返回 null（不强行提示）
+function sendTimingFor(market) {
+  const tz = marketUtcOffset(market);
+  if (!tz) return null;
+  const now = new Date();
+  const utcH = now.getUTCHours() + now.getUTCMinutes() / 60;
+  const localH = (((utcH + tz.offset) % 24) + 24) % 24;
+  // 客户当地 9-11 点 对应的北京时间（UTC+8）
+  const bjStart = Math.round((((9 - tz.offset + 8) % 24) + 24) % 24);
+  const bjEnd = Math.round((((11 - tz.offset + 8) % 24) + 24) % 24);
+  const hh = String(Math.floor(localH)).padStart(2, "0");
+  const mm = String(Math.floor((localH % 1) * 60)).padStart(2, "0");
+  return {
+    offset: tz.offset,
+    note: tz.note,
+    localTime: `${hh}:${mm}`,
+    windowBJ: `${bjStart}:00–${bjEnd}:00`,
+    good: localH >= 8 && localH < 12, // 当地上午，正合适
+    night: localH >= 0 && localH < 7 // 当地深夜，发了会沉箱底
+  };
+}
+
+// 发信队列里每封待发邮件的时机徽章
+function sendTimingBadge(item) {
+  const prospect = state.prospects.find((p) => p.id === item.prospectId);
+  const t = sendTimingFor(prospect?.market);
+  if (!t) return "";
+  if (t.good) return `<span class="timing-tag good" title="客户当地现在 ${t.localTime}，正是上午黄金时段">⏰ 当地 ${t.localTime} · 现在发正合适</span>`;
+  if (t.night) return `<span class="timing-tag night" title="客户当地现在 ${t.localTime}（深夜），发了会沉到邮箱底部">⏰ 当地 ${t.localTime} 深夜 · 建议北京时间 ${t.windowBJ} 发</span>`;
+  return `<span class="timing-tag" title="客户当地现在 ${t.localTime}${t.note ? "（" + t.note + "）" : ""}">⏰ 最佳发送 北京时间 ${t.windowBJ}</span>`;
 }
 
 /* ---------- 深色模式 ---------- */

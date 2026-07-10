@@ -689,6 +689,7 @@ function renderOutbox() {
           <span>
             <strong>${escapeHtml(item.company)} · ${escapeHtml(item.label)}</strong>
             <span>${escapeHtml(item.email || "（缺邮箱）")} · ${item.dueDate} · ${escapeHtml(item.subject)}</span>
+            ${selectable ? sendTimingBadge(item) : ""}
           </span>
           <span class="outbox-status">${selectable ? preflightBadge(item) : ""}<span class="badge">${escapeHtml(item.status)}</span></span>
         </article>

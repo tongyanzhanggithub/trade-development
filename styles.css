@@ -3799,3 +3799,32 @@ body.dark .quote-doc {
     padding: 10mm;
   }
 }
+
+/* 发送时机徽章 */
+.timing-tag {
+  display: inline-block;
+  margin-top: 3px;
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.06);
+  opacity: 0.85;
+  width: fit-content;
+}
+.timing-tag.good {
+  background: rgba(21, 128, 61, 0.12);
+  color: #15803d;
+}
+.timing-tag.night {
+  background: rgba(217, 119, 6, 0.14);
+  color: #b45309;
+}
+body.dark .timing-tag {
+  background: rgba(255, 255, 255, 0.1);
+}
+body.dark .timing-tag.good {
+  color: #4ade80;
+}
+body.dark .timing-tag.night {
+  color: #fbbf24;
+}

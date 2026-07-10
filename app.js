@@ -1,4 +1,4 @@
-window.__APP_V = "c4fe2359";
+window.__APP_V = "13c3d25e";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -59,6 +59,15 @@ const AI_PROVIDERS = {
 };
 
 const $ = (selector) => document.querySelector(selector);
+
+// 防抖：把连续触发（如筛选框逐字输入）合并成停顿后一次执行，避免每个字符都重建整张列表
+function debounce(fn, wait = 160) {
+  let timer = null;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), wait);
+  };
+}
 
 const elements = {
   navTabs: document.querySelectorAll(".nav-tab"),
@@ -7613,10 +7622,10 @@ elements.loadImportExample.addEventListener("click", () => {
   renderLogs();
 });
 
-elements.queryFilter.addEventListener("input", renderQueries);
+elements.queryFilter.addEventListener("input", debounce(renderQueries));
 elements.exportQueries.addEventListener("click", exportQueries);
 
-elements.prospectFilter.addEventListener("input", renderProspects);
+elements.prospectFilter.addEventListener("input", debounce(renderProspects));
 elements.statusFilter.addEventListener("change", renderProspects);
 if (elements.gradeFilter) elements.gradeFilter.addEventListener("change", renderProspects);
 if (elements.prospectSort) elements.prospectSort.addEventListener("change", renderProspects);
@@ -7911,7 +7920,7 @@ elements.markAllRead.addEventListener("click", () => {
   }
 );
 
-elements.conversationFilter.addEventListener("input", renderInbox);
+elements.conversationFilter.addEventListener("input", debounce(renderInbox));
 elements.conversationStatusFilter.addEventListener("change", renderInbox);
 
 elements.conversationList.addEventListener("click", (event) => {

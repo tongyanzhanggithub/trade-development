@@ -1855,10 +1855,10 @@ elements.loadImportExample.addEventListener("click", () => {
   renderLogs();
 });
 
-elements.queryFilter.addEventListener("input", renderQueries);
+elements.queryFilter.addEventListener("input", debounce(renderQueries));
 elements.exportQueries.addEventListener("click", exportQueries);
 
-elements.prospectFilter.addEventListener("input", renderProspects);
+elements.prospectFilter.addEventListener("input", debounce(renderProspects));
 elements.statusFilter.addEventListener("change", renderProspects);
 if (elements.gradeFilter) elements.gradeFilter.addEventListener("change", renderProspects);
 if (elements.prospectSort) elements.prospectSort.addEventListener("change", renderProspects);
@@ -2153,7 +2153,7 @@ elements.markAllRead.addEventListener("click", () => {
   }
 );
 
-elements.conversationFilter.addEventListener("input", renderInbox);
+elements.conversationFilter.addEventListener("input", debounce(renderInbox));
 elements.conversationStatusFilter.addEventListener("change", renderInbox);
 
 elements.conversationList.addEventListener("click", (event) => {

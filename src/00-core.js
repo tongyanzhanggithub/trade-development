@@ -60,6 +60,15 @@ const AI_PROVIDERS = {
 
 const $ = (selector) => document.querySelector(selector);
 
+// 防抖：把连续触发（如筛选框逐字输入）合并成停顿后一次执行，避免每个字符都重建整张列表
+function debounce(fn, wait = 160) {
+  let timer = null;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), wait);
+  };
+}
+
 const elements = {
   navTabs: document.querySelectorAll(".nav-tab"),
   views: document.querySelectorAll(".view"),

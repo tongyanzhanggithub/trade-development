@@ -171,7 +171,7 @@ function buildEmailSequence(campaign, prospect) {
       : tpl.firstSubject
     : `Supplier option for ${product}`;
 
-  return [
+  const sequence = [
     {
       id: makeId("email"),
       label: "首封开发信",
@@ -238,6 +238,10 @@ Best regards,
 ${sender}`
     }
   ];
+
+  // 合规：每封信尾附一句轻量退订说明（回复 unsubscribe 会被系统识别为退订并自动拉黑）
+  const unsub = `If this isn't relevant to you, just reply "unsubscribe" and I won't email again.`;
+  return sequence.map((email) => ({ ...email, body: `${email.body}\n\n${unsub}` }));
 }
 
 function buildWhatsappSequence(campaign, prospect) {

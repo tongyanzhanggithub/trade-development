@@ -1,4 +1,4 @@
-window.__APP_V = "1a194d22";
+window.__APP_V = "c8fd4f5f";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -3674,7 +3674,7 @@ function buildEmailSequence(campaign, prospect) {
       : tpl.firstSubject
     : `Supplier option for ${product}`;
 
-  return [
+  const sequence = [
     {
       id: makeId("email"),
       label: "首封开发信",
@@ -3741,6 +3741,10 @@ Best regards,
 ${sender}`
     }
   ];
+
+  // 合规：每封信尾附一句轻量退订说明（回复 unsubscribe 会被系统识别为退订并自动拉黑）
+  const unsub = `If this isn't relevant to you, just reply "unsubscribe" and I won't email again.`;
+  return sequence.map((email) => ({ ...email, body: `${email.body}\n\n${unsub}` }));
 }
 
 function buildWhatsappSequence(campaign, prospect) {
@@ -5382,7 +5386,7 @@ async function generateSequenceAI() {
   addLog(`Claude 正在为 ${prospect.company} 深度写信…`);
   try {
     const system =
-      "你是顶尖外贸开发信专家。为指定客户写一套 4 封开发信序列（D0 首触 / D3 跟进 / D7 案例或样品 / D14 收尾）。每封 90-140 词，围绕该客户的业务与市场个性化切入，避免模板腔与夸张营销语。若给了「具体产品聚焦/英文术语」，主题与正文要点名这个具体产品（用英文行业叫法），而非泛泛的品类；卖点与能力只能用给定的知识库/卖点，不要编造参数。label 用中文。语言规则：按客户市场的商务语言写正文——拉美用西班牙语（巴西用葡萄牙语）、法语区非洲用法语、中东可英语正文+阿语问候；首封在正文下附简短英文版本；其他市场用英文。";
+      "你是顶尖外贸开发信专家。为指定客户写一套 4 封开发信序列（D0 首触 / D3 跟进 / D7 案例或样品 / D14 收尾）。每封 90-140 词，围绕该客户的业务与市场个性化切入，避免模板腔与夸张营销语。若给了「具体产品聚焦/英文术语」，主题与正文要点名这个具体产品（用英文行业叫法），而非泛泛的品类；卖点与能力只能用给定的知识库/卖点，不要编造参数。label 用中文。语言规则：按客户市场的商务语言写正文——拉美用西班牙语（巴西用葡萄牙语）、法语区非洲用法语、中东可英语正文+阿语问候；首封在正文下附简短英文版本；其他市场用英文。合规：每封信结尾附一句轻量退订说明（英文，如让对方回复 unsubscribe 即不再打扰），语气自然不生硬。";
     const ctx = campaignContextLines();
     const user = `产品: ${state.campaign.product}
 卖点: ${state.campaign.valueProps}

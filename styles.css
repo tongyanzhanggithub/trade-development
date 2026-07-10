@@ -3828,3 +3828,25 @@ body.dark .timing-tag.good {
 body.dark .timing-tag.night {
   color: #fbbf24;
 }
+
+/* 每周战报 */
+.report-pre {
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.7;
+  background: rgba(0, 0, 0, 0.045);
+  padding: 14px 16px;
+  border-radius: 8px;
+  max-height: 52vh;
+  overflow: auto;
+  margin: 0 0 10px;
+}
+.report-ai {
+  font-size: 13px;
+  margin: 4px 0 6px;
+  opacity: 0.9;
+}
+body.dark .report-pre {
+  background: rgba(255, 255, 255, 0.07);
+}

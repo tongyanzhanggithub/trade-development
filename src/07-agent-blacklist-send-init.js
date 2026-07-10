@@ -2499,6 +2499,19 @@ elements.aiBaseUrlInput?.addEventListener("change", () => {
   saveState();
 });
 
+// ---------- 每周战报 ----------
+elements.weeklyReportBtn?.addEventListener("click", () => openWeeklyReport());
+elements.reportOverlay?.addEventListener("click", (event) => {
+  if (event.target === elements.reportOverlay) {
+    elements.reportOverlay.hidden = true;
+    return;
+  }
+  const action = event.target.closest("[data-report-action]");
+  if (!action) return;
+  if (action.dataset.reportAction === "close") elements.reportOverlay.hidden = true;
+  else if (action.dataset.reportAction === "copy") copyWeeklyReport(action);
+});
+
 // ---------- 产品库 + 报价单 ----------
 elements.openQuoteBuilder?.addEventListener("click", () => openQuoteBuilder());
 

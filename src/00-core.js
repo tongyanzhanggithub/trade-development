@@ -204,6 +204,8 @@ const elements = {
   productManager: $("#productManager"),
   quoteOverlay: $("#quoteOverlay"),
   openQuoteBuilder: $("#openQuoteBuilder"),
+  weeklyReportBtn: $("#weeklyReportBtn"),
+  reportOverlay: $("#reportOverlay"),
   welcomeOverlay: $("#welcomeOverlay"),
   welcomeDemo: $("#welcomeDemo"),
   welcomeStart: $("#welcomeStart"),

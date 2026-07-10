@@ -1056,3 +1056,153 @@ function verifyProspectList(prospects) {
     score: prospect.email ? Math.min(99, prospect.score + 5) : prospect.score
   }));
 }
+
+/* ---------- AI 每周战报（一键生成本周数据摘要 + 下周行动建议，可复制汇报） ---------- */
+
+let lastReportText = "";
+
+function weeklyStats() {
+  const cutoff = Date.now() - 7 * 86400000;
+  const fmt = (ms) => new Date(ms).toISOString().slice(0, 10);
+
+  const sent = state.outbox.filter((o) => o.status === "已发送" && o.sentAt && new Date(o.sentAt).getTime() >= cutoff);
+  const delivered = sent.filter((o) => o.delivered).length;
+  const opened = sent.filter((o) => o.opened).length;
+  const bounced = sent.filter((o) => o.bounced).length;
+
+  const replies = state.inbound.filter((m) => (m.at || 0) >= cutoff);
+  const replyProspects = new Set(replies.map((m) => m.prospectId));
+  const HOT = ["price", "sample", "moq", "leadtime", "cert"];
+  const hotProspects = new Set(
+    replies.filter((m) => HOT.includes(classifyIntent(m.body || "").key)).map((m) => m.prospectId)
+  );
+
+  const quotes7 = state.quotes.filter((q) => new Date(q.createdAt).getTime() >= cutoff);
+  const quoteTotals = {};
+  quotes7.forEach((q) => {
+    quoteTotals[q.currency] = (quoteTotals[q.currency] || 0) + q.total;
+  });
+  // 未回复的报价（发出后客户没再来信）
+  const pendingQuotes = state.quotes.filter((q) => {
+    const t = new Date(q.createdAt).getTime();
+    return !state.inbound.some((m) => m.prospectId === q.prospectId && (m.at || 0) > t);
+  });
+
+  const stage = (s) => state.prospects.filter((p) => p.dealStage === s).length;
+
+  // 回复率最高的市场（全量口径，至少触达 2 家）
+  const contactedBy = new Map();
+  state.outbox.filter((o) => o.status === "已发送").forEach((o) => {
+    const p = state.prospects.find((x) => x.id === o.prospectId);
+    if (!p) return;
+    if (!contactedBy.has(p.market)) contactedBy.set(p.market, new Set());
+    contactedBy.get(p.market).add(p.id);
+  });
+  let bestMarket = null;
+  contactedBy.forEach((ids, market) => {
+    if (ids.size < 2) return;
+    const replied = [...ids].filter((id) => state.inbound.some((m) => m.prospectId === id)).length;
+    if (!replied) return; // 没有任何回复的市场不构成"最佳"，避免推荐 0%
+    const rate = Math.round((replied / ids.size) * 100);
+    if (!bestMarket || rate > bestMarket.rate) bestMarket = { market, rate, replied, reached: ids.size };
+  });
+
+  return {
+    from: fmt(cutoff),
+    to: fmt(Date.now()),
+    sentN: sent.length,
+    delivered,
+    opened,
+    bounced,
+    replyN: replies.length,
+    replyCompanies: replyProspects.size,
+    hotN: hotProspects.size,
+    quoteN: quotes7.length,
+    quoteTotals,
+    pendingQuotes,
+    inquiry: stage("询盘"),
+    quoting: stage("报价"),
+    won: stage("成交"),
+    dueFollow: dueFollowupProspects().length,
+    pendingApproval: state.outbox.filter((o) => o.status === "待审批").length,
+    bestMarket
+  };
+}
+
+function weeklySuggestions(s) {
+  const tips = [];
+  if (s.dueFollow) tips.push(`跟进 ${s.dueFollow} 位到期未回复客户（「一键批量跟进」）`);
+  if (s.pendingQuotes.length)
+    tips.push(`追未回复的报价 ${s.pendingQuotes.slice(0, 3).map((q) => q.number).join("、")}${s.pendingQuotes.length > 3 ? " 等" : ""}（共 ${s.pendingQuotes.length} 张）`);
+  if (s.pendingApproval) tips.push(`过一遍 ${s.pendingApproval} 封待审批邮件（队列「批量审批发送」）`);
+  if (s.bestMarket) tips.push(`「${s.bestMarket.market}」回复率最高（${s.bestMarket.rate}%），下周可倾斜补同市场线索`);
+  if (!s.sentN) tips.push(`本周零发送——先「一键起量」补线索并入队`);
+  if (s.bounced >= 2) tips.push(`本周退信 ${s.bounced} 封，放量前先检查邮箱验证质量`);
+  return tips.slice(0, 4);
+}
+
+function weeklyReportText(s, tips) {
+  const money2 = (n) => Number(n || 0).toLocaleString("en-US", { maximumFractionDigits: 0 });
+  const quoteLine = s.quoteN
+    ? `新出报价 ${s.quoteN} 张，合计 ${Object.entries(s.quoteTotals).map(([c, v]) => `${c} ${money2(v)}`).join(" + ")}`
+    : "本周未出报价";
+  return `📊 外贸开发周报（${s.from} ~ ${s.to}）
+
+【触达】发送 ${s.sentN} 封（送达 ${s.delivered} · 打开 ${s.opened}${s.bounced ? ` · ⚠ 退信 ${s.bounced}` : ""}）
+【回复】收到 ${s.replyN} 条回信（${s.replyCompanies} 家客户），热意向（询价/要样/MOQ）${s.hotN} 家
+【报价】${quoteLine}
+【管道】询盘 ${s.inquiry} 家 · 报价 ${s.quoting} 家 · 成交 ${s.won} 家
+【待办】${s.dueFollow} 位客户到期未跟进 · ${s.pendingApproval} 封邮件待审批
+
+下周建议：
+${tips.map((t) => `- ${t}`).join("\n") || "- 保持当前节奏，持续补充线索"}`;
+}
+
+function openWeeklyReport() {
+  const host = elements.reportOverlay;
+  if (!host) return;
+  const s = weeklyStats();
+  const tips = weeklySuggestions(s);
+  lastReportText = weeklyReportText(s, tips);
+  const ai = aiEnabled();
+  host.innerHTML = `
+    <div class="panel quote-card" role="dialog" aria-modal="true" aria-label="每周战报">
+      <h2>📊 每周战报</h2>
+      <pre class="report-pre">${escapeHtml(lastReportText)}</pre>
+      ${ai ? `<div class="report-ai" id="reportAiSlot">🤖 AI 点评生成中…</div>` : `<p class="connector-hint">配置 AI 引擎后，这里会附上大模型的针对性点评。</p>`}
+      <div class="quote-actions">
+        <button class="primary-button" data-report-action="copy" type="button"><span>复制周报</span></button>
+        <button class="ghost-button" data-report-action="close" type="button"><span>关闭</span></button>
+      </div>
+    </div>
+  `;
+  host.hidden = false;
+
+  if (ai) {
+    const system =
+      "你是外贸开发运营顾问。基于给定周报数据，用中文给 3-5 条具体、可执行的下周行动建议，每条一行以 - 开头；直接说做什么，不要客套和复述数据。";
+    callAI(system, lastReportText, null, 800)
+      .then((text) => {
+        const slot = document.getElementById("reportAiSlot");
+        if (slot) slot.innerHTML = `<strong>🤖 AI 点评</strong><pre class="report-pre">${escapeHtml(text)}</pre>`;
+        lastReportText += `\n\nAI 点评：\n${text}`;
+      })
+      .catch((error) => {
+        const slot = document.getElementById("reportAiSlot");
+        if (slot) slot.textContent = `AI 点评生成失败（${error.message}），以上本地建议仍可用`;
+      });
+  }
+}
+
+function copyWeeklyReport(button) {
+  const done = () => {
+    const span = button?.querySelector("span");
+    if (span) span.textContent = "已复制 ✓";
+    addLog("周报已复制，可直接粘贴汇报");
+  };
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(lastReportText).then(done).catch(() => fallbackCopy(lastReportText, done));
+  } else {
+    fallbackCopy(lastReportText, done);
+  }
+}

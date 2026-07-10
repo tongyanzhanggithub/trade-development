@@ -1,4 +1,4 @@
-window.__APP_V = "e6beb164";
+window.__APP_V = "d7673db7";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -609,6 +609,9 @@ function storageUsage() {
 function renderDataSafety() {
   if (!elements.dataSafety) return;
   const { kb, pct } = storageUsage();
+  const slimItems = slimmableOutbox();
+  const slimN = slimItems.length;
+  const slimBytes = slimItems.reduce((sum, o) => sum + (o.body || "").length, 0);
   const last = state.ui?.lastBackupAt;
   const lastText = last ? `${new Date(last).toLocaleString("zh-CN", { hour12: false })}（${Math.floor((Date.now() - new Date(last).getTime()) / 86400000)} 天前）` : "从未备份";
   const overdue = !last || Date.now() - new Date(last).getTime() > 7 * 86400000;
@@ -627,6 +630,11 @@ function renderDataSafety() {
       <span>数据规模</span>
       <div></div>
       <strong>${state.prospects.length} 线索 · ${state.outbox.length} 邮件 · ${state.blacklist?.length || 0} 黑名单</strong>
+    </div>
+    <div class="safety-row">
+      <span>数据瘦身</span>
+      <div>${slimN ? `<button class="ghost-button" data-safety="slim" type="button"><span>一键瘦身老邮件</span></button>` : ""}</div>
+      <strong>${slimN ? `${slimN} 封老邮件可归档正文（约省 ${Math.max(1, Math.round(slimBytes / 1024))} KB）` : "暂无可瘦身（30 天前发出且未回复的已发邮件才会归档）"}</strong>
     </div>
   `;
 }
@@ -4319,6 +4327,12 @@ function renderTodo() {
   if (dueSend) rows.push(["zap", `${dueSend} 封已批准邮件到期待发`, `data-goto="automation"`, "去发送"]);
   if (unread) rows.push(["inbox", `${unread} 条新回复待处理`, `data-goto="inbox"`, "去收件箱"]);
   if (dueFollow) rows.push(["shuffle", `${dueFollow} 位客户到期未回复`, `data-todo="followup"`, "一键批量跟进"]);
+  // 备份提醒：有真实数据且超 7 天没备份，直接进待办（数据在浏览器里，清缓存会丢）
+  const lastBackup = state.ui?.lastBackupAt ? new Date(state.ui.lastBackupAt).getTime() : 0;
+  if (state.prospects.length && Date.now() - lastBackup > 7 * 86400000) {
+    const days = lastBackup ? Math.floor((Date.now() - lastBackup) / 86400000) : null;
+    rows.push(["download", lastBackup ? `已 ${days} 天未备份数据` : "还没备份过数据（清缓存会丢）", `data-todo="backup"`, "一键导出备份"]);
+  }
 
   // Webhook 模式且配了对应 Webhook 时，标题栏放一键拉取（前置条件与后台函数一致）
   const wh = state.settings.mode === "webhook";
@@ -7513,6 +7527,40 @@ function exportJson() {
   addLog("已导出全量备份（含线索/队列/黑名单/配置），请妥善保存该 JSON 文件");
 }
 
+// 数据瘦身：整封邮件正文是 localStorage 的主要占用。把 30 天前发出、且客户未回复的
+// 已发邮件正文归档清空（仅留主题/状态/日期，分析统计不受影响），把 5MB 天花板往后推。
+function slimmableOutbox() {
+  const cutoff = Date.now() - 30 * 86400000;
+  const repliedIds = new Set(state.inbound.map((m) => m.prospectId));
+  return state.outbox.filter(
+    (o) =>
+      o.status === "已发送" &&
+      !o.slimmed &&
+      (o.body || "").length > 40 &&
+      o.sentAt &&
+      new Date(o.sentAt).getTime() < cutoff &&
+      !repliedIds.has(o.prospectId)
+  );
+}
+
+function slimOldData() {
+  const items = slimmableOutbox();
+  if (!items.length) {
+    addLog("暂无可瘦身的邮件（只归档 30 天前发出、且客户未回复的已发邮件正文）");
+    render();
+    return;
+  }
+  let saved = 0;
+  items.forEach((o) => {
+    saved += (o.body || "").length;
+    o.body = "";
+    o.slimmed = true;
+  });
+  addLog(`已瘦身 ${items.length} 封老邮件（正文归档，仅留主题/状态/日期），约省 ${Math.max(1, Math.round(saved / 1024))} KB；分析统计不受影响。`);
+  saveState();
+  render();
+}
+
 function readFileAsText(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -7669,6 +7717,13 @@ document.addEventListener("click", (event) => {
     if (kind === "followup") queueDueFollowups();
     else if (kind === "pull") runAsyncButton(todoTarget, "拉取中…", () => pullInboundReplies());
     else if (kind === "pullstatus") runAsyncButton(todoTarget, "同步中…", () => pullDeliveryStatus());
+    else if (kind === "backup") exportJson();
+    return;
+  }
+  // 数据与备份：一键瘦身老邮件
+  const safetyTarget = event.target.closest("[data-safety]");
+  if (safetyTarget) {
+    if (safetyTarget.dataset.safety === "slim") slimOldData();
     return;
   }
   // 优先联系名单：点一行 → 选中该客户并跳到对应视图（有回信去收件箱，否则去潜客详情）

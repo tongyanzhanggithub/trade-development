@@ -1536,6 +1536,40 @@ function exportJson() {
   addLog("已导出全量备份（含线索/队列/黑名单/配置），请妥善保存该 JSON 文件");
 }
 
+// 数据瘦身：整封邮件正文是 localStorage 的主要占用。把 30 天前发出、且客户未回复的
+// 已发邮件正文归档清空（仅留主题/状态/日期，分析统计不受影响），把 5MB 天花板往后推。
+function slimmableOutbox() {
+  const cutoff = Date.now() - 30 * 86400000;
+  const repliedIds = new Set(state.inbound.map((m) => m.prospectId));
+  return state.outbox.filter(
+    (o) =>
+      o.status === "已发送" &&
+      !o.slimmed &&
+      (o.body || "").length > 40 &&
+      o.sentAt &&
+      new Date(o.sentAt).getTime() < cutoff &&
+      !repliedIds.has(o.prospectId)
+  );
+}
+
+function slimOldData() {
+  const items = slimmableOutbox();
+  if (!items.length) {
+    addLog("暂无可瘦身的邮件（只归档 30 天前发出、且客户未回复的已发邮件正文）");
+    render();
+    return;
+  }
+  let saved = 0;
+  items.forEach((o) => {
+    saved += (o.body || "").length;
+    o.body = "";
+    o.slimmed = true;
+  });
+  addLog(`已瘦身 ${items.length} 封老邮件（正文归档，仅留主题/状态/日期），约省 ${Math.max(1, Math.round(saved / 1024))} KB；分析统计不受影响。`);
+  saveState();
+  render();
+}
+
 function readFileAsText(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1692,6 +1726,13 @@ document.addEventListener("click", (event) => {
     if (kind === "followup") queueDueFollowups();
     else if (kind === "pull") runAsyncButton(todoTarget, "拉取中…", () => pullInboundReplies());
     else if (kind === "pullstatus") runAsyncButton(todoTarget, "同步中…", () => pullDeliveryStatus());
+    else if (kind === "backup") exportJson();
+    return;
+  }
+  // 数据与备份：一键瘦身老邮件
+  const safetyTarget = event.target.closest("[data-safety]");
+  if (safetyTarget) {
+    if (safetyTarget.dataset.safety === "slim") slimOldData();
     return;
   }
   // 优先联系名单：点一行 → 选中该客户并跳到对应视图（有回信去收件箱，否则去潜客详情）

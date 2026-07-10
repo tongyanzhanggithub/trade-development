@@ -730,6 +730,12 @@ function renderTodo() {
   if (dueSend) rows.push(["zap", `${dueSend} 封已批准邮件到期待发`, `data-goto="automation"`, "去发送"]);
   if (unread) rows.push(["inbox", `${unread} 条新回复待处理`, `data-goto="inbox"`, "去收件箱"]);
   if (dueFollow) rows.push(["shuffle", `${dueFollow} 位客户到期未回复`, `data-todo="followup"`, "一键批量跟进"]);
+  // 备份提醒：有真实数据且超 7 天没备份，直接进待办（数据在浏览器里，清缓存会丢）
+  const lastBackup = state.ui?.lastBackupAt ? new Date(state.ui.lastBackupAt).getTime() : 0;
+  if (state.prospects.length && Date.now() - lastBackup > 7 * 86400000) {
+    const days = lastBackup ? Math.floor((Date.now() - lastBackup) / 86400000) : null;
+    rows.push(["download", lastBackup ? `已 ${days} 天未备份数据` : "还没备份过数据（清缓存会丢）", `data-todo="backup"`, "一键导出备份"]);
+  }
 
   // Webhook 模式且配了对应 Webhook 时，标题栏放一键拉取（前置条件与后台函数一致）
   const wh = state.settings.mode === "webhook";

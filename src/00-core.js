@@ -609,6 +609,9 @@ function storageUsage() {
 function renderDataSafety() {
   if (!elements.dataSafety) return;
   const { kb, pct } = storageUsage();
+  const slimItems = slimmableOutbox();
+  const slimN = slimItems.length;
+  const slimBytes = slimItems.reduce((sum, o) => sum + (o.body || "").length, 0);
   const last = state.ui?.lastBackupAt;
   const lastText = last ? `${new Date(last).toLocaleString("zh-CN", { hour12: false })}（${Math.floor((Date.now() - new Date(last).getTime()) / 86400000)} 天前）` : "从未备份";
   const overdue = !last || Date.now() - new Date(last).getTime() > 7 * 86400000;
@@ -627,6 +630,11 @@ function renderDataSafety() {
       <span>数据规模</span>
       <div></div>
       <strong>${state.prospects.length} 线索 · ${state.outbox.length} 邮件 · ${state.blacklist?.length || 0} 黑名单</strong>
+    </div>
+    <div class="safety-row">
+      <span>数据瘦身</span>
+      <div>${slimN ? `<button class="ghost-button" data-safety="slim" type="button"><span>一键瘦身老邮件</span></button>` : ""}</div>
+      <strong>${slimN ? `${slimN} 封老邮件可归档正文（约省 ${Math.max(1, Math.round(slimBytes / 1024))} KB）` : "暂无可瘦身（30 天前发出且未回复的已发邮件才会归档）"}</strong>
     </div>
   `;
 }

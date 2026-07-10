@@ -1,4 +1,4 @@
-window.__APP_V = "c8fd4f5f";
+window.__APP_V = "e6beb164";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -162,6 +162,7 @@ const elements = {
   webhookMode: $("#webhookMode"),
   searchWebhook: $("#searchWebhook"),
   inboundWebhook: $("#inboundWebhook"),
+  statusWebhook: $("#statusWebhook"),
   enrichWebhook: $("#enrichWebhook"),
   sendWebhook: $("#sendWebhook"),
   whatsappWebhook: $("#whatsappWebhook"),
@@ -252,7 +253,8 @@ const WEBHOOK_CONNECTORS = {
   send: { urlKey: "sendWebhook", label: "发信" },
   whatsapp: { urlKey: "whatsappWebhook", label: "WhatsApp" },
   crm: { urlKey: "crmWebhook", label: "CRM 同步" },
-  inbound: { urlKey: "inboundWebhook", label: "拉取回复" }
+  inbound: { urlKey: "inboundWebhook", label: "拉取回复" },
+  status: { urlKey: "statusWebhook", label: "发送状态回传" }
 };
 
 const DEAL_STAGES = ["线索", "已触达", "已回复", "询盘", "报价", "成交"];
@@ -451,6 +453,7 @@ function createDemoState() {
       mode: "local",
       searchWebhook: "",
       inboundWebhook: "",
+      statusWebhook: "",
       enrichWebhook: "",
       sendWebhook: "",
       whatsappWebhook: "",
@@ -797,6 +800,7 @@ function bindSettingsForm() {
   const settings = state.settings;
   elements.searchWebhook.value = settings.searchWebhook;
   if (elements.inboundWebhook) elements.inboundWebhook.value = settings.inboundWebhook || "";
+  if (elements.statusWebhook) elements.statusWebhook.value = settings.statusWebhook || "";
   elements.enrichWebhook.value = settings.enrichWebhook;
   elements.sendWebhook.value = settings.sendWebhook;
   elements.whatsappWebhook.value = settings.whatsappWebhook;
@@ -863,6 +867,7 @@ function readSettingsFromForm() {
     ...state.settings,
     searchWebhook: elements.searchWebhook.value.trim(),
     inboundWebhook: elements.inboundWebhook ? elements.inboundWebhook.value.trim() : state.settings.inboundWebhook || "",
+    statusWebhook: elements.statusWebhook ? elements.statusWebhook.value.trim() : state.settings.statusWebhook || "",
     enrichWebhook: elements.enrichWebhook.value.trim(),
     sendWebhook: elements.sendWebhook.value.trim(),
     whatsappWebhook: elements.whatsappWebhook.value.trim(),
@@ -2039,6 +2044,75 @@ async function pullInboundReplies(quiet = false) {
   return ingested;
 }
 
+// 拉取发送状态回传：从「发送状态回传 Webhook」同步 送达/退信/打开/投诉。
+// 硬退信与投诉自动进黑名单（保护发信域名信誉，避免继续往坏地址发）。
+// 期望响应：{ events: [ { email, event: "delivered"|"opened"|"bounced"|"complained", at } ] }
+async function pullDeliveryStatus(quiet = false) {
+  if (!(state.settings.mode === "webhook" && webhookUrl("status"))) {
+    if (!quiet) addLog("未配置「发送状态回传 Webhook」：接入后自动同步送达/退信/打开；硬退信会自动拉黑，保护发信域名不被拖垮");
+    return 0;
+  }
+  const result = await callWebhook("status", { since: state.lastStatusPullAt || null });
+  if (!result.ok) {
+    if (!quiet) addLog(`拉取发送状态失败：${result.error || result.code || "无响应"}`);
+    return 0;
+  }
+  const events = Array.isArray(result.data?.events) ? result.data.events : [];
+  state.lastStatusPullAt = new Date().toISOString();
+  if (!events.length) {
+    if (!quiet) addLog("发送状态回传：暂无更新");
+    saveState();
+    return 0;
+  }
+
+  let delivered = 0;
+  let opened = 0;
+  let bounced = 0;
+  let complained = 0;
+  events.forEach((e) => {
+    const email = (e.email || e.to || "").toLowerCase().trim();
+    const ev = (e.event || e.status || e.type || "").toLowerCase();
+    if (!email) return;
+    const items = state.outbox.filter((o) => (o.email || "").toLowerCase() === email && o.status === "已发送");
+    const prospect = items[0] && state.prospects.find((p) => p.id === items[0].prospectId);
+    if (/bounce|fail|invalid|reject|undeliver|hard/.test(ev)) {
+      items.forEach((o) => {
+        o.bounced = true;
+        o.delivered = false;
+      });
+      if (prospect) {
+        prospect.emailStatus = "退信";
+        addToBlacklist(prospect, "硬退信（邮箱无效，自动拉黑保护发信域名）");
+      }
+      bounced += 1;
+    } else if (/complain|spam|abuse/.test(ev)) {
+      if (prospect) markProspectOptOut(prospect.id, "对方标记为垃圾邮件");
+      complained += 1;
+    } else if (/open/.test(ev)) {
+      items.forEach((o) => {
+        o.opened = true;
+        o.delivered = true;
+      });
+      opened += 1;
+    } else if (/deliver|sent|accept/.test(ev)) {
+      items.forEach((o) => {
+        o.delivered = true;
+      });
+      delivered += 1;
+    }
+  });
+
+  const parts = [];
+  if (delivered) parts.push(`${delivered} 送达`);
+  if (opened) parts.push(`${opened} 打开`);
+  if (bounced) parts.push(`⚠ ${bounced} 退信（已拉黑）`);
+  if (complained) parts.push(`⛔ ${complained} 投诉（已拉黑）`);
+  addLog(`发送状态回传：${parts.join(" · ") || "无变化"}`);
+  saveState();
+  render();
+  return events.length;
+}
+
 async function processInboundIntelligence(prospectId) {
   // 已配置 Claude 时先做语义级意图分析（回填后 auto-respond 用真实意图判断）
   if (aiEnabled()) await enrichInboundWithAI(prospectId);
@@ -2609,6 +2683,17 @@ function renderAnalyticsInsight(funnel) {
   const outbox = axOutbox();
   const wa = axWa();
 
+  // 退信率：保护发信域名的第一信号。样本够且偏高时红字警告先停量
+  const sentItems = outbox.filter((o) => o.status === "已发送");
+  const bouncedN = sentItems.filter((o) => o.bounced).length;
+  const bounceRate = pct(bouncedN, sentItems.length);
+  const bounceWarn =
+    sentItems.length >= 10 && bounceRate >= 5
+      ? `<div class="bounce-warn">⚠ 退信率 <strong>${bounceRate}%</strong>（${bouncedN}/${sentItems.length}）偏高——建议先暂停放量，检查邮箱验证质量与发信域名设置；退信率高会拖垮送达、伤域名信誉。</div>`
+      : bouncedN
+        ? `<div class="insight-sub">已回传退信 ${bouncedN} 封（率 ${bounceRate}%），相关邮箱已自动拉黑。</div>`
+        : "";
+
   // 回复率最高的市场（至少触达 2 家才纳入，避免小样本噪音）
   const markets = [...new Set(state.prospects.map((p) => p.market))];
   const marketStats = markets
@@ -2664,7 +2749,7 @@ function renderAnalyticsInsight(funnel) {
       </div>`
     : "";
 
-  if (!parts.length && !dueN && !priority.length) {
+  if (!parts.length && !dueN && !priority.length && !bounceWarn) {
     elements.analyticsInsight.innerHTML = `<span class="insight-hint">先触达并积累回复数据，这里会告诉你哪个市场/话术成功率最高、该优先追谁、以及给谁发跟进。</span>`;
     return;
   }
@@ -2673,6 +2758,7 @@ function renderAnalyticsInsight(funnel) {
     ? `<button class="primary-button" id="insightFollowup" type="button"><svg><use href="#icon-shuffle" /></svg><span>一键批量跟进 (${dueN})</span></button>`
     : "";
   elements.analyticsInsight.innerHTML = `
+    ${bounceWarn}
     <div class="insight-text">💡 ${parts.join(" · ") || "已有触达数据"}${dueN ? ` · <strong>${dueN}</strong> 位客户到期未回复，该跟进了` : ""}</div>
     ${action}
     ${priorityHtml}
@@ -4111,6 +4197,15 @@ async function autopilotTick() {
     }
   }
 
+  // -0.5) 拉取发送状态回传（送达/退信/打开；硬退信自动拉黑，保护发信域名）
+  if (state.settings.mode === "webhook" && webhookUrl("status")) {
+    const lastStatus = state.lastStatusPullAt ? new Date(state.lastStatusPullAt).getTime() : 0;
+    if (Date.now() - lastStatus > 60000) {
+      const synced = await pullDeliveryStatus(true);
+      if (synced) actions.push(`同步发送状态 ${synced} 条`);
+    }
+  }
+
   // 0) Agent 周期任务：到周期自动补充一批新线索
   if (agentCycleDue()) {
     const added = await agentRunCycle(false);
@@ -4225,12 +4320,17 @@ function renderTodo() {
   if (unread) rows.push(["inbox", `${unread} 条新回复待处理`, `data-goto="inbox"`, "去收件箱"]);
   if (dueFollow) rows.push(["shuffle", `${dueFollow} 位客户到期未回复`, `data-todo="followup"`, "一键批量跟进"]);
 
-  // Webhook 模式且配了「拉取回复 Webhook」时，在标题栏放一个一键拉取（与 pullInboundReplies 的前置条件一致）
-  const canPull = state.settings.mode === "webhook" && !!(state.settings.inboundWebhook || "").trim();
+  // Webhook 模式且配了对应 Webhook 时，标题栏放一键拉取（前置条件与后台函数一致）
+  const wh = state.settings.mode === "webhook";
+  const canPull = wh && !!(state.settings.inboundWebhook || "").trim();
+  const canStatus = wh && !!(state.settings.statusWebhook || "").trim();
   const pullBtn = canPull
     ? `<button class="ghost-button todo-pull" data-todo="pull" type="button"><svg><use href="#icon-download" /></svg><span>拉取新回复</span></button>`
     : "";
-  const head = `<div class="todo-head"><strong>今日待办</strong>${rows.length ? `<span class="todo-count">${rows.length} 项</span>` : ""}<span class="todo-head-spacer"></span>${pullBtn}</div>`;
+  const statusBtn = canStatus
+    ? `<button class="ghost-button todo-pull" data-todo="pullstatus" type="button"><svg><use href="#icon-check" /></svg><span>拉取送达状态</span></button>`
+    : "";
+  const head = `<div class="todo-head"><strong>今日待办</strong>${rows.length ? `<span class="todo-count">${rows.length} 项</span>` : ""}<span class="todo-head-spacer"></span>${pullBtn}${statusBtn}</div>`;
 
   if (!rows.length) {
     host.innerHTML =
@@ -7568,6 +7668,7 @@ document.addEventListener("click", (event) => {
     const kind = todoTarget.dataset.todo;
     if (kind === "followup") queueDueFollowups();
     else if (kind === "pull") runAsyncButton(todoTarget, "拉取中…", () => pullInboundReplies());
+    else if (kind === "pullstatus") runAsyncButton(todoTarget, "同步中…", () => pullDeliveryStatus());
     return;
   }
   // 优先联系名单：点一行 → 选中该客户并跳到对应视图（有回信去收件箱，否则去潜客详情）

@@ -608,6 +608,15 @@ async function autopilotTick() {
     }
   }
 
+  // -0.5) 拉取发送状态回传（送达/退信/打开；硬退信自动拉黑，保护发信域名）
+  if (state.settings.mode === "webhook" && webhookUrl("status")) {
+    const lastStatus = state.lastStatusPullAt ? new Date(state.lastStatusPullAt).getTime() : 0;
+    if (Date.now() - lastStatus > 60000) {
+      const synced = await pullDeliveryStatus(true);
+      if (synced) actions.push(`同步发送状态 ${synced} 条`);
+    }
+  }
+
   // 0) Agent 周期任务：到周期自动补充一批新线索
   if (agentCycleDue()) {
     const added = await agentRunCycle(false);
@@ -722,12 +731,17 @@ function renderTodo() {
   if (unread) rows.push(["inbox", `${unread} 条新回复待处理`, `data-goto="inbox"`, "去收件箱"]);
   if (dueFollow) rows.push(["shuffle", `${dueFollow} 位客户到期未回复`, `data-todo="followup"`, "一键批量跟进"]);
 
-  // Webhook 模式且配了「拉取回复 Webhook」时，在标题栏放一个一键拉取（与 pullInboundReplies 的前置条件一致）
-  const canPull = state.settings.mode === "webhook" && !!(state.settings.inboundWebhook || "").trim();
+  // Webhook 模式且配了对应 Webhook 时，标题栏放一键拉取（前置条件与后台函数一致）
+  const wh = state.settings.mode === "webhook";
+  const canPull = wh && !!(state.settings.inboundWebhook || "").trim();
+  const canStatus = wh && !!(state.settings.statusWebhook || "").trim();
   const pullBtn = canPull
     ? `<button class="ghost-button todo-pull" data-todo="pull" type="button"><svg><use href="#icon-download" /></svg><span>拉取新回复</span></button>`
     : "";
-  const head = `<div class="todo-head"><strong>今日待办</strong>${rows.length ? `<span class="todo-count">${rows.length} 项</span>` : ""}<span class="todo-head-spacer"></span>${pullBtn}</div>`;
+  const statusBtn = canStatus
+    ? `<button class="ghost-button todo-pull" data-todo="pullstatus" type="button"><svg><use href="#icon-check" /></svg><span>拉取送达状态</span></button>`
+    : "";
+  const head = `<div class="todo-head"><strong>今日待办</strong>${rows.length ? `<span class="todo-count">${rows.length} 项</span>` : ""}<span class="todo-head-spacer"></span>${pullBtn}${statusBtn}</div>`;
 
   if (!rows.length) {
     host.innerHTML =

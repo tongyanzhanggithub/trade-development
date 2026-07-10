@@ -162,6 +162,7 @@ const elements = {
   webhookMode: $("#webhookMode"),
   searchWebhook: $("#searchWebhook"),
   inboundWebhook: $("#inboundWebhook"),
+  statusWebhook: $("#statusWebhook"),
   enrichWebhook: $("#enrichWebhook"),
   sendWebhook: $("#sendWebhook"),
   whatsappWebhook: $("#whatsappWebhook"),
@@ -252,7 +253,8 @@ const WEBHOOK_CONNECTORS = {
   send: { urlKey: "sendWebhook", label: "发信" },
   whatsapp: { urlKey: "whatsappWebhook", label: "WhatsApp" },
   crm: { urlKey: "crmWebhook", label: "CRM 同步" },
-  inbound: { urlKey: "inboundWebhook", label: "拉取回复" }
+  inbound: { urlKey: "inboundWebhook", label: "拉取回复" },
+  status: { urlKey: "statusWebhook", label: "发送状态回传" }
 };
 
 const DEAL_STAGES = ["线索", "已触达", "已回复", "询盘", "报价", "成交"];
@@ -451,6 +453,7 @@ function createDemoState() {
       mode: "local",
       searchWebhook: "",
       inboundWebhook: "",
+      statusWebhook: "",
       enrichWebhook: "",
       sendWebhook: "",
       whatsappWebhook: "",

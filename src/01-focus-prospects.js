@@ -113,6 +113,7 @@ function bindSettingsForm() {
   const settings = state.settings;
   elements.searchWebhook.value = settings.searchWebhook;
   if (elements.inboundWebhook) elements.inboundWebhook.value = settings.inboundWebhook || "";
+  if (elements.statusWebhook) elements.statusWebhook.value = settings.statusWebhook || "";
   elements.enrichWebhook.value = settings.enrichWebhook;
   elements.sendWebhook.value = settings.sendWebhook;
   elements.whatsappWebhook.value = settings.whatsappWebhook;
@@ -179,6 +180,7 @@ function readSettingsFromForm() {
     ...state.settings,
     searchWebhook: elements.searchWebhook.value.trim(),
     inboundWebhook: elements.inboundWebhook ? elements.inboundWebhook.value.trim() : state.settings.inboundWebhook || "",
+    statusWebhook: elements.statusWebhook ? elements.statusWebhook.value.trim() : state.settings.statusWebhook || "",
     enrichWebhook: elements.enrichWebhook.value.trim(),
     sendWebhook: elements.sendWebhook.value.trim(),
     whatsappWebhook: elements.whatsappWebhook.value.trim(),

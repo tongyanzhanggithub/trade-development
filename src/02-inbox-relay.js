@@ -596,6 +596,75 @@ async function pullInboundReplies(quiet = false) {
   return ingested;
 }
 
+// 拉取发送状态回传：从「发送状态回传 Webhook」同步 送达/退信/打开/投诉。
+// 硬退信与投诉自动进黑名单（保护发信域名信誉，避免继续往坏地址发）。
+// 期望响应：{ events: [ { email, event: "delivered"|"opened"|"bounced"|"complained", at } ] }
+async function pullDeliveryStatus(quiet = false) {
+  if (!(state.settings.mode === "webhook" && webhookUrl("status"))) {
+    if (!quiet) addLog("未配置「发送状态回传 Webhook」：接入后自动同步送达/退信/打开；硬退信会自动拉黑，保护发信域名不被拖垮");
+    return 0;
+  }
+  const result = await callWebhook("status", { since: state.lastStatusPullAt || null });
+  if (!result.ok) {
+    if (!quiet) addLog(`拉取发送状态失败：${result.error || result.code || "无响应"}`);
+    return 0;
+  }
+  const events = Array.isArray(result.data?.events) ? result.data.events : [];
+  state.lastStatusPullAt = new Date().toISOString();
+  if (!events.length) {
+    if (!quiet) addLog("发送状态回传：暂无更新");
+    saveState();
+    return 0;
+  }
+
+  let delivered = 0;
+  let opened = 0;
+  let bounced = 0;
+  let complained = 0;
+  events.forEach((e) => {
+    const email = (e.email || e.to || "").toLowerCase().trim();
+    const ev = (e.event || e.status || e.type || "").toLowerCase();
+    if (!email) return;
+    const items = state.outbox.filter((o) => (o.email || "").toLowerCase() === email && o.status === "已发送");
+    const prospect = items[0] && state.prospects.find((p) => p.id === items[0].prospectId);
+    if (/bounce|fail|invalid|reject|undeliver|hard/.test(ev)) {
+      items.forEach((o) => {
+        o.bounced = true;
+        o.delivered = false;
+      });
+      if (prospect) {
+        prospect.emailStatus = "退信";
+        addToBlacklist(prospect, "硬退信（邮箱无效，自动拉黑保护发信域名）");
+      }
+      bounced += 1;
+    } else if (/complain|spam|abuse/.test(ev)) {
+      if (prospect) markProspectOptOut(prospect.id, "对方标记为垃圾邮件");
+      complained += 1;
+    } else if (/open/.test(ev)) {
+      items.forEach((o) => {
+        o.opened = true;
+        o.delivered = true;
+      });
+      opened += 1;
+    } else if (/deliver|sent|accept/.test(ev)) {
+      items.forEach((o) => {
+        o.delivered = true;
+      });
+      delivered += 1;
+    }
+  });
+
+  const parts = [];
+  if (delivered) parts.push(`${delivered} 送达`);
+  if (opened) parts.push(`${opened} 打开`);
+  if (bounced) parts.push(`⚠ ${bounced} 退信（已拉黑）`);
+  if (complained) parts.push(`⛔ ${complained} 投诉（已拉黑）`);
+  addLog(`发送状态回传：${parts.join(" · ") || "无变化"}`);
+  saveState();
+  render();
+  return events.length;
+}
+
 async function processInboundIntelligence(prospectId) {
   // 已配置 Claude 时先做语义级意图分析（回填后 auto-respond 用真实意图判断）
   if (aiEnabled()) await enrichInboundWithAI(prospectId);

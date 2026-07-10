@@ -153,6 +153,17 @@ function renderAnalyticsInsight(funnel) {
   const outbox = axOutbox();
   const wa = axWa();
 
+  // 退信率：保护发信域名的第一信号。样本够且偏高时红字警告先停量
+  const sentItems = outbox.filter((o) => o.status === "已发送");
+  const bouncedN = sentItems.filter((o) => o.bounced).length;
+  const bounceRate = pct(bouncedN, sentItems.length);
+  const bounceWarn =
+    sentItems.length >= 10 && bounceRate >= 5
+      ? `<div class="bounce-warn">⚠ 退信率 <strong>${bounceRate}%</strong>（${bouncedN}/${sentItems.length}）偏高——建议先暂停放量，检查邮箱验证质量与发信域名设置；退信率高会拖垮送达、伤域名信誉。</div>`
+      : bouncedN
+        ? `<div class="insight-sub">已回传退信 ${bouncedN} 封（率 ${bounceRate}%），相关邮箱已自动拉黑。</div>`
+        : "";
+
   // 回复率最高的市场（至少触达 2 家才纳入，避免小样本噪音）
   const markets = [...new Set(state.prospects.map((p) => p.market))];
   const marketStats = markets
@@ -208,7 +219,7 @@ function renderAnalyticsInsight(funnel) {
       </div>`
     : "";
 
-  if (!parts.length && !dueN && !priority.length) {
+  if (!parts.length && !dueN && !priority.length && !bounceWarn) {
     elements.analyticsInsight.innerHTML = `<span class="insight-hint">先触达并积累回复数据，这里会告诉你哪个市场/话术成功率最高、该优先追谁、以及给谁发跟进。</span>`;
     return;
   }
@@ -217,6 +228,7 @@ function renderAnalyticsInsight(funnel) {
     ? `<button class="primary-button" id="insightFollowup" type="button"><svg><use href="#icon-shuffle" /></svg><span>一键批量跟进 (${dueN})</span></button>`
     : "";
   elements.analyticsInsight.innerHTML = `
+    ${bounceWarn}
     <div class="insight-text">💡 ${parts.join(" · ") || "已有触达数据"}${dueN ? ` · <strong>${dueN}</strong> 位客户到期未回复，该跟进了` : ""}</div>
     ${action}
     ${priorityHtml}

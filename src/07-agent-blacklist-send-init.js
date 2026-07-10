@@ -1691,6 +1691,7 @@ document.addEventListener("click", (event) => {
     const kind = todoTarget.dataset.todo;
     if (kind === "followup") queueDueFollowups();
     else if (kind === "pull") runAsyncButton(todoTarget, "拉取中…", () => pullInboundReplies());
+    else if (kind === "pullstatus") runAsyncButton(todoTarget, "同步中…", () => pullDeliveryStatus());
     return;
   }
   // 优先联系名单：点一行 → 选中该客户并跳到对应视图（有回信去收件箱，否则去潜客详情）

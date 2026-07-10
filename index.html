@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>自动化外贸开发系统</title>
     <link rel="icon" type="image/png" href="./favicon.png" />
-    <link rel="stylesheet" href="./styles.css?v=b2385d7c" />
+    <link rel="stylesheet" href="./styles.css?v=bc632387" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
@@ -711,7 +711,11 @@
                 <svg><use href="#icon-check" /></svg>
                 <span>生成跟进任务</span>
               </button>
-              <button class="primary-button" id="exportCrm" type="button">
+              <button class="primary-button" id="openQuoteBuilder" type="button" title="选客户+选产品行，生成专业英文报价单（打印/PDF/复制进邮件），CRM 自动推进到「报价」">
+                <svg><use href="#icon-briefcase" /></svg>
+                <span>生成报价单</span>
+              </button>
+              <button class="ghost-button" id="exportCrm" type="button">
                 <svg><use href="#icon-download" /></svg>
                 <span>导出管道</span>
               </button>
@@ -951,6 +955,17 @@
                 </div>
               </div>
               <div class="account-list" id="accountManager"></div>
+            </section>
+
+            <section class="panel management-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Products</p>
+                  <h2>产品库</h2>
+                </div>
+              </div>
+              <p class="connector-hint">一处维护，三处受益：AI 回复引用真实参数、报价单直接选行、开发信卖点更准。价格为参考单价（报价时可改）。</p>
+              <div id="productManager"></div>
             </section>
 
             <section class="panel management-panel">
@@ -1239,17 +1254,19 @@
       </div>
     </div>
 
+    <div class="quote-overlay" id="quoteOverlay" hidden></div>
+
     <div class="drawer-overlay" id="crmDrawerOverlay" hidden>
       <aside class="drawer" id="crmDrawer" role="dialog" aria-modal="true" aria-label="客户详情"></aside>
     </div>
 
     <div class="toast-stack" id="toastStack" aria-live="polite"></div>
 
-    <script src="./app.js?v=b2385d7c" defer></script>
+    <script src="./app.js?v=bc632387" defer></script>
     <script>
       // 缓存哨兵：若浏览器仍加载旧版 app.js（版本不匹配或加载失败导致按钮失灵），给出明确提示
       window.addEventListener("load", () => {
-        if (window.__APP_V !== "b2385d7c") {
+        if (window.__APP_V !== "bc632387") {
           const tip = document.createElement("div");
           tip.style.cssText =
             "position:fixed;top:0;left:0;right:0;z-index:9999;padding:12px 16px;background:#c2410c;color:#fff;font-size:14px;text-align:center;font-weight:700;";

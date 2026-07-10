@@ -3610,3 +3610,192 @@ body.dark .bounce-warn {
   border-color: rgba(248, 113, 113, 0.3);
   color: #f87171;
 }
+
+/* 产品库 */
+.product-form {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.product-form input {
+  min-width: 0;
+}
+.product-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 4px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  font-size: 13px;
+}
+.product-cell.grow {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.product-cell.dim {
+  opacity: 0.6;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.product-del {
+  flex: none;
+  padding: 3px 10px;
+}
+body.dark .product-row {
+  border-top-color: rgba(255, 255, 255, 0.08);
+}
+
+/* 报价单弹层 */
+.quote-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9997;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 30px 16px;
+  overflow-y: auto;
+  background: rgba(20, 22, 20, 0.55);
+  backdrop-filter: blur(2px);
+}
+.quote-overlay[hidden] {
+  display: none;
+}
+.quote-card {
+  width: 100%;
+  max-width: 720px;
+  padding: 22px 24px;
+}
+.quote-card h2 {
+  margin: 0 0 12px;
+}
+.quote-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.quote-form-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.qline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+.qline-pick {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  min-width: 0;
+}
+.qline-qty {
+  width: 90px;
+  flex: none;
+}
+.qline-price {
+  width: 110px;
+  flex: none;
+}
+.qline-name {
+  flex: 1;
+}
+.quote-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+  justify-content: flex-end;
+}
+
+/* 报价单文档样式（屏幕 + 打印共用） */
+.quote-doc {
+  background: #fff;
+  color: #1a1a1a;
+  padding: 28px 32px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.qd-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  border-bottom: 2px solid #1a1a1a;
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+}
+.qd-head h1 {
+  margin: 0;
+  font-size: 20px;
+}
+.qd-sub {
+  margin: 2px 0 0;
+  letter-spacing: 4px;
+  font-weight: 700;
+  opacity: 0.75;
+}
+.qd-meta p {
+  margin: 0;
+  text-align: right;
+}
+.qd-to {
+  margin: 4px 0;
+}
+.qd-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+}
+.qd-table th,
+.qd-table td {
+  border: 1px solid #999;
+  padding: 6px 8px;
+  text-align: left;
+}
+.qd-table th {
+  background: #f1f1ee;
+}
+.qd-table .num {
+  text-align: right;
+  white-space: nowrap;
+}
+.qd-note {
+  margin: 8px 0;
+}
+.qd-sign {
+  margin-top: 26px;
+  text-align: right;
+}
+body.dark .quote-doc {
+  background: #fff;
+  color: #1a1a1a;
+}
+
+/* 打印：只打印报价单本体 */
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+  #quotePrintArea,
+  #quotePrintArea * {
+    visibility: visible !important;
+  }
+  #quotePrintArea {
+    position: fixed;
+    inset: 0;
+    border: none;
+    border-radius: 0;
+    padding: 10mm;
+  }
+}

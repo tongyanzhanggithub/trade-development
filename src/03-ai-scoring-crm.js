@@ -372,3 +372,303 @@ function exportCrm() {
   }));
   download("crm-pipeline.csv", toCsv(rows), "text/csv");
 }
+
+/* ---------- 产品库 + 报价单生成器（询盘 → 报价 → 成交 的转化工具） ---------- */
+
+function renderProducts() {
+  const host = elements.productManager;
+  if (!host) return;
+  const rows = state.products
+    .map(
+      (p) => `
+      <div class="product-row">
+        <span class="product-cell"><strong>${escapeHtml(p.model)}</strong></span>
+        <span class="product-cell grow">${escapeHtml(p.name)}</span>
+        <span class="product-cell">MOQ ${escapeHtml(p.moq || "—")}</span>
+        <span class="product-cell">${p.price ? `$${escapeHtml(String(p.price))}/${escapeHtml(p.unit || "pc")}` : "价格面议"}</span>
+        <span class="product-cell dim">${escapeHtml(p.packing || "")}${p.certs ? ` · ${escapeHtml(p.certs)}` : ""}</span>
+        <button class="ghost-button product-del" data-product-del="${p.id}" type="button"><span>删除</span></button>
+      </div>`
+    )
+    .join("");
+  host.innerHTML = `
+    <div class="product-form">
+      <input id="pfModel" placeholder="型号* 如 CG125-CYL" />
+      <input id="pfName" placeholder="英文品名* 如 Cylinder Block Kit" />
+      <input id="pfMoq" placeholder="MOQ 如 100 pcs" />
+      <input id="pfPrice" type="number" step="0.01" min="0" placeholder="参考单价 USD" />
+      <input id="pfUnit" placeholder="单位 如 pc/set" />
+      <input id="pfPacking" placeholder="箱规/包装 可空" />
+      <input id="pfCerts" placeholder="认证 如 CCC,SONCAP 可空" />
+      <button class="primary-button" data-product-action="add" type="button"><span>添加产品</span></button>
+    </div>
+    ${rows || `<div class="empty-state">还没有产品。先把常卖的型号加进来——AI 回复、报价单都会用它。</div>`}
+  `;
+}
+
+function addProductFromForm() {
+  const val = (id) => (document.getElementById(id)?.value || "").trim();
+  const model = val("pfModel");
+  const name = val("pfName");
+  if (!model || !name) {
+    addLog("请至少填写 型号 和 英文品名");
+    return;
+  }
+  state.products.push({
+    id: makeId("prod"),
+    model,
+    name,
+    moq: val("pfMoq"),
+    price: Number(val("pfPrice")) || 0,
+    unit: val("pfUnit") || "pc",
+    packing: val("pfPacking"),
+    certs: val("pfCerts")
+  });
+  addLog(`产品已入库：${model} ${name}`);
+  saveState();
+  renderProducts();
+}
+
+/* ----- 报价单 ----- */
+
+function money(n) {
+  return Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function openQuoteBuilder(presetProspectId) {
+  const host = elements.quoteOverlay;
+  if (!host) return;
+  if (!state.prospects.length) {
+    addLog("还没有客户线索，先去「搜索」导入或一键起量");
+    return;
+  }
+  const selectedId = presetProspectId || crmDrawerProspectId || state.selectedProspectId || state.prospects[0].id;
+  const hot = (p) => (p.dealStage === "询盘" || p.dealStage === "已回复" ? 1 : 0);
+  const options = [...state.prospects]
+    .sort((a, b) => hot(b) - hot(a))
+    .map((p) => `<option value="${p.id}" ${p.id === selectedId ? "selected" : ""}>${escapeHtml(p.company)}（${escapeHtml(p.market)}${p.dealStage ? " · " + escapeHtml(p.dealStage) : ""}）</option>`)
+    .join("");
+  const productLines = state.products
+    .map(
+      (p) => `
+      <div class="qline">
+        <label class="qline-pick"><input type="checkbox" data-qline="${p.id}" /> <strong>${escapeHtml(p.model)}</strong> ${escapeHtml(p.name)}</label>
+        <input class="qline-qty" type="number" min="1" value="100" title="数量" />
+        <input class="qline-price" type="number" step="0.01" min="0" value="${p.price || ""}" placeholder="单价" title="单价" />
+      </div>`
+    )
+    .join("");
+  host.innerHTML = `
+    <div class="panel quote-card" role="dialog" aria-modal="true" aria-label="生成报价单">
+      <h2>生成报价单</h2>
+      <div class="quote-form">
+        <label><span>客户</span><select id="qbCustomer">${options}</select></label>
+        <div class="quote-form-row">
+          <label><span>贸易条款</span><select id="qbIncoterm"><option>FOB</option><option>CIF</option><option>CFR</option><option>EXW</option><option>DDP</option></select></label>
+          <label><span>港口/地点</span><input id="qbPort" placeholder="如 Shanghai / Lagos" /></label>
+          <label><span>币种</span><select id="qbCurrency"><option>USD</option><option>EUR</option><option>RMB</option></select></label>
+          <label><span>有效期(天)</span><input id="qbValid" type="number" min="1" value="15" /></label>
+        </div>
+        <p class="eyebrow">报价行（勾选产品库，或加自定义行）</p>
+        <div id="qbLines">${productLines || ""}</div>
+        <div id="qbCustomLines"></div>
+        <button class="ghost-button" data-quote-action="add-line" type="button"><span>+ 加一行自定义产品</span></button>
+        <label><span>备注/条款（可空，如付款方式、交期）</span><textarea id="qbNote" rows="2" placeholder="Payment and lead time to be confirmed."></textarea></label>
+      </div>
+      <div class="quote-actions">
+        <button class="primary-button" data-quote-action="generate" type="button"><span>生成报价单</span></button>
+        <button class="ghost-button" data-quote-action="close" type="button"><span>取消</span></button>
+      </div>
+    </div>
+  `;
+  host.hidden = false;
+}
+
+function addCustomQuoteLine() {
+  const box = document.getElementById("qbCustomLines");
+  if (!box) return;
+  const row = document.createElement("div");
+  row.className = "qline";
+  row.innerHTML = `
+    <input class="qline-name" placeholder="品名/型号（自定义）" />
+    <input class="qline-qty" type="number" min="1" value="100" title="数量" />
+    <input class="qline-price" type="number" step="0.01" min="0" placeholder="单价" title="单价" />
+  `;
+  box.appendChild(row);
+}
+
+function collectQuoteLines() {
+  const lines = [];
+  document.querySelectorAll("#qbLines .qline").forEach((row) => {
+    const pick = row.querySelector("[data-qline]");
+    if (!pick?.checked) return;
+    const product = state.products.find((p) => p.id === pick.dataset.qline);
+    if (!product) return;
+    const qty = Number(row.querySelector(".qline-qty")?.value) || 0;
+    const price = Number(row.querySelector(".qline-price")?.value) || 0;
+    if (qty > 0) lines.push({ model: product.model, name: product.name, unit: product.unit || "pc", qty, price });
+  });
+  document.querySelectorAll("#qbCustomLines .qline").forEach((row) => {
+    const name = (row.querySelector(".qline-name")?.value || "").trim();
+    const qty = Number(row.querySelector(".qline-qty")?.value) || 0;
+    const price = Number(row.querySelector(".qline-price")?.value) || 0;
+    if (name && qty > 0) lines.push({ model: "", name, unit: "pc", qty, price });
+  });
+  return lines;
+}
+
+function generateQuote() {
+  const prospect = state.prospects.find((p) => p.id === document.getElementById("qbCustomer")?.value);
+  const lines = collectQuoteLines();
+  if (!prospect) {
+    addLog("请选择客户");
+    return;
+  }
+  if (!lines.length) {
+    addLog("请至少勾选/填写一行报价（数量>0）");
+    return;
+  }
+  const today = dateOffset(0);
+  const seq = state.quotes.filter((q) => (q.createdAt || "").slice(0, 10) === today).length + 1;
+  const quote = {
+    id: makeId("quote"),
+    number: `Q-${today.replaceAll("-", "")}-${String(seq).padStart(2, "0")}`,
+    prospectId: prospect.id,
+    company: prospect.company,
+    contactName: prospect.contactName || "",
+    items: lines,
+    currency: document.getElementById("qbCurrency")?.value || "USD",
+    incoterm: document.getElementById("qbIncoterm")?.value || "FOB",
+    port: (document.getElementById("qbPort")?.value || "").trim(),
+    validDays: Number(document.getElementById("qbValid")?.value) || 15,
+    note: (document.getElementById("qbNote")?.value || "").trim(),
+    total: lines.reduce((s, l) => s + l.qty * l.price, 0),
+    createdAt: new Date().toISOString()
+  };
+  state.quotes.unshift(quote);
+
+  // CRM 联动：推进到「报价」并把管道金额换成真实报价额
+  prospect.dealValue = Math.round(quote.total);
+  advanceDealStage(prospect.id, "报价");
+
+  // 报价跟进闭环：3 天后自动排一封引用报价编号的跟进邮件（待审批）
+  if (prospect.email) {
+    state.outbox.push({
+      id: makeId("outbox"),
+      prospectId: prospect.id,
+      company: prospect.company,
+      email: prospect.email,
+      label: "报价跟进",
+      step: "报价跟进",
+      subject: `Follow-up on Quotation ${quote.number}`,
+      body: `Hi ${(prospect.contactName || "there").split(" ")[0]},
+
+Just following up on quotation ${quote.number} (${quote.currency} ${money(quote.total)}, valid ${quote.validDays} days) I sent earlier.
+
+Happy to adjust quantities or specs if needed — is there anything holding you back?
+
+Best regards,
+${state.campaign.senderName}
+${state.campaign.companyName}`,
+      dueDate: dateOffset(3),
+      createdAt: new Date().toISOString(),
+      status: "待审批"
+    });
+  }
+
+  addLog(`报价单 ${quote.number} 已生成（${quote.currency} ${money(quote.total)}）：CRM 已推进到「报价」${prospect.email ? "，3 天后跟进邮件已排队待审批" : ""}`);
+  saveState();
+  showQuoteDoc(quote);
+  render();
+}
+
+// 报价单纯文本版：直接粘进回信正文
+function quoteToText(quote) {
+  const head = `QUOTATION ${quote.number}
+Date: ${quote.createdAt.slice(0, 10)}   Valid: ${quote.validDays} days
+To: ${quote.company}${quote.contactName ? " / " + quote.contactName : ""}
+Terms: ${quote.incoterm}${quote.port ? " " + quote.port : ""}, ${quote.currency}
+`;
+  const lines = quote.items
+    .map((l, i) => `${i + 1}. ${l.model ? l.model + " " : ""}${l.name} — ${l.qty} ${l.unit} x ${money(l.price)} = ${money(l.qty * l.price)}`)
+    .join("\n");
+  return `${head}\n${lines}\n\nTOTAL: ${quote.currency} ${money(quote.total)}${quote.note ? `\n\nRemarks: ${quote.note}` : ""}\n\n${state.campaign.senderName}\n${state.campaign.companyName}`;
+}
+
+function showQuoteDoc(quote) {
+  const host = elements.quoteOverlay;
+  if (!host) return;
+  const rows = quote.items
+    .map(
+      (l, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${escapeHtml(l.model)}</td>
+        <td>${escapeHtml(l.name)}</td>
+        <td class="num">${l.qty} ${escapeHtml(l.unit)}</td>
+        <td class="num">${money(l.price)}</td>
+        <td class="num">${money(l.qty * l.price)}</td>
+      </tr>`
+    )
+    .join("");
+  host.innerHTML = `
+    <div class="panel quote-card quote-doc-wrap" role="dialog" aria-modal="true" aria-label="报价单">
+      <div class="quote-doc" id="quotePrintArea">
+        <div class="qd-head">
+          <div>
+            <h1>${escapeHtml(state.campaign.companyName)}</h1>
+            <p class="qd-sub">QUOTATION</p>
+          </div>
+          <div class="qd-meta">
+            <p><strong>No.:</strong> ${escapeHtml(quote.number)}</p>
+            <p><strong>Date:</strong> ${quote.createdAt.slice(0, 10)}</p>
+            <p><strong>Valid:</strong> ${quote.validDays} days</p>
+          </div>
+        </div>
+        <p class="qd-to"><strong>To:</strong> ${escapeHtml(quote.company)}${quote.contactName ? ` — ${escapeHtml(quote.contactName)}` : ""}</p>
+        <p class="qd-to"><strong>Terms:</strong> ${escapeHtml(quote.incoterm)}${quote.port ? " " + escapeHtml(quote.port) : ""} · Currency: ${escapeHtml(quote.currency)}</p>
+        <table class="qd-table">
+          <thead><tr><th>#</th><th>Model</th><th>Description</th><th class="num">Qty</th><th class="num">Unit Price</th><th class="num">Amount</th></tr></thead>
+          <tbody>${rows}</tbody>
+          <tfoot><tr><td colspan="5" class="num"><strong>TOTAL (${escapeHtml(quote.currency)})</strong></td><td class="num"><strong>${money(quote.total)}</strong></td></tr></tfoot>
+        </table>
+        ${quote.note ? `<p class="qd-note"><strong>Remarks:</strong> ${escapeHtml(quote.note)}</p>` : ""}
+        <p class="qd-sign">${escapeHtml(state.campaign.senderName)}<br />${escapeHtml(state.campaign.companyName)}</p>
+      </div>
+      <div class="quote-actions">
+        <button class="primary-button" data-quote-action="print" type="button"><span>打印 / 存 PDF</span></button>
+        <button class="ghost-button" data-quote-action="copy" data-quote-id="${quote.id}" type="button"><span>复制文本版</span></button>
+        <button class="ghost-button" data-quote-action="close" type="button"><span>完成</span></button>
+      </div>
+    </div>
+  `;
+  host.hidden = false;
+}
+
+function copyQuoteText(quoteId, button) {
+  const quote = state.quotes.find((q) => q.id === quoteId);
+  if (!quote) return;
+  const text = quoteToText(quote);
+  const done = () => {
+    const span = button?.querySelector("span");
+    if (span) span.textContent = "已复制 ✓";
+    addLog(`报价单 ${quote.number} 文本已复制，可直接粘进回信`);
+  };
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+  } else {
+    fallbackCopy(text, done);
+  }
+}
+
+function fallbackCopy(text, done) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    document.execCommand("copy");
+    done();
+  } catch {}
+  ta.remove();
+}

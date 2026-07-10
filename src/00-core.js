@@ -201,6 +201,9 @@ const elements = {
   toastStack: $("#toastStack"),
   onboardingChecklist: $("#onboardingChecklist"),
   todoPanel: $("#todoPanel"),
+  productManager: $("#productManager"),
+  quoteOverlay: $("#quoteOverlay"),
+  openQuoteBuilder: $("#openQuoteBuilder"),
   welcomeOverlay: $("#welcomeOverlay"),
   welcomeDemo: $("#welcomeDemo"),
   welcomeStart: $("#welcomeStart"),
@@ -381,6 +384,8 @@ function normalizeStoredState(parsed) {
     },
     logs: Array.isArray(parsed.logs) ? parsed.logs : fallback.logs,
     blacklist: Array.isArray(parsed.blacklist) ? parsed.blacklist : fallback.blacklist,
+    products: Array.isArray(parsed.products) ? parsed.products : fallback.products,
+    quotes: Array.isArray(parsed.quotes) ? parsed.quotes : fallback.quotes,
     management: parsed.management
       ? mergeManagement(fallback.management, parsed.management)
       : fallback.management
@@ -489,6 +494,8 @@ function createDemoState() {
     ui: { checklistDismissed: false, theme: "light", analyticsRange: "all", sendApprovalMigrated: true, sentOnlyStageMigrated: true },
     agent: { task: null, approvals: [], autoRespond: false },
     blacklist: [], // 持久退订黑名单：[{ email, domain, company, reason, at }]，清空线索池也不丢
+    products: [], // 产品库：[{ id, model, name, moq, price, unit, packing, certs }]，喂 AI 知识 + 报价单选行
+    quotes: [], // 报价单：[{ id, number, prospectId, company, items, currency, incoterm, port, validDays, total, createdAt }]
     management: createManagementState(campaign),
     logs: [{ id: makeId("log"), time: timestamp(), message: "示例自动化活动已生成" }]
   };

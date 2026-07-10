@@ -505,6 +505,14 @@ function campaignContextLines() {
   if (c.customerType) lines.push(`客户类型: ${c.customerType}`);
   const kb = (c.knowledgeBase || "").trim();
   if (kb) lines.push(`产品知识库/FAQ（回答客户问题、写卖点时以此为准，不要编造）:\n${kb.slice(0, 1200)}`);
+  // 产品库：给 AI 真实型号/MOQ/参考价，回复与写信引用真实参数
+  if (state.products?.length) {
+    const list = state.products
+      .slice(0, 12)
+      .map((p) => `- ${p.model} ${p.name}${p.moq ? ` | MOQ ${p.moq}` : ""}${p.price ? ` | ~$${p.price}/${p.unit || "pc"}` : ""}${p.certs ? ` | ${p.certs}` : ""}`)
+      .join("\n");
+    lines.push(`产品库（真实在售型号，报价细节仍由销售确认）:\n${list}`);
+  }
   return lines.join("\n");
 }
 

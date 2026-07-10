@@ -2499,6 +2499,40 @@ elements.aiBaseUrlInput?.addEventListener("change", () => {
   saveState();
 });
 
+// ---------- 产品库 + 报价单 ----------
+elements.openQuoteBuilder?.addEventListener("click", () => openQuoteBuilder());
+
+elements.productManager?.addEventListener("click", (event) => {
+  if (event.target.closest('[data-product-action="add"]')) {
+    addProductFromForm();
+    return;
+  }
+  const del = event.target.closest("[data-product-del]");
+  if (del) {
+    const id = del.dataset.productDel;
+    const p = state.products.find((x) => x.id === id);
+    state.products = state.products.filter((x) => x.id !== id);
+    addLog(`已删除产品：${p ? p.model : id}`);
+    saveState();
+    renderProducts();
+  }
+});
+
+elements.quoteOverlay?.addEventListener("click", (event) => {
+  if (event.target === elements.quoteOverlay) {
+    elements.quoteOverlay.hidden = true;
+    return;
+  }
+  const action = event.target.closest("[data-quote-action]");
+  if (!action) return;
+  const kind = action.dataset.quoteAction;
+  if (kind === "close") elements.quoteOverlay.hidden = true;
+  else if (kind === "add-line") addCustomQuoteLine();
+  else if (kind === "generate") generateQuote();
+  else if (kind === "print") window.print();
+  else if (kind === "copy") copyQuoteText(action.dataset.quoteId, action);
+});
+
 document.addEventListener("keydown", (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
     event.preventDefault();

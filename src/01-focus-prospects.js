@@ -208,7 +208,7 @@ const VIEW_RENDERERS = {
   crm: [renderCrm],
   automation: [renderOutbox, renderWhatsappQueue, renderTasks, renderLogs],
   analytics: [renderAnalytics],
-  management: [renderManagement],
+  management: [renderManagement, renderProducts],
   settings: [renderDataSafety, renderWebhookPanel]
 };
 

@@ -3492,3 +3492,88 @@ body.dark .backup-overdue {
 body.dark .todo-row {
   border-top-color: rgba(255, 255, 255, 0.08);
 }
+
+/* 分析看板：优先联系名单 */
+.priority-list {
+  margin-top: 12px;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  padding-top: 10px;
+}
+.priority-list .eyebrow {
+  margin: 0 0 6px;
+}
+.priority-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 6px;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+}
+.priority-row:hover {
+  background: rgba(15, 118, 110, 0.08);
+}
+.priority-rank {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  background: rgba(15, 118, 110, 0.12);
+  color: #0f766e;
+}
+.priority-name {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.priority-name strong {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.priority-name small {
+  opacity: 0.6;
+  font-size: 12px;
+}
+.priority-tags {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.ptag {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.06);
+  white-space: nowrap;
+}
+.ptag.hot {
+  background: rgba(220, 38, 38, 0.12);
+  color: #b91c1c;
+}
+.ptag.warm {
+  background: rgba(217, 119, 6, 0.14);
+  color: #b45309;
+}
+body.dark .priority-list {
+  border-top-color: rgba(255, 255, 255, 0.1);
+}
+body.dark .priority-row:hover {
+  background: rgba(45, 212, 191, 0.12);
+}
+body.dark .ptag {
+  background: rgba(255, 255, 255, 0.1);
+}

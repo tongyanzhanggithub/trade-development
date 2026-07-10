@@ -1691,6 +1691,20 @@ document.addEventListener("click", (event) => {
     if (todoTarget.dataset.todo === "followup") queueDueFollowups();
     return;
   }
+  // 优先联系名单：点一行 → 选中该客户并跳到对应视图（有回信去收件箱，否则去潜客详情）
+  const priTarget = event.target.closest("[data-priority]");
+  if (priTarget) {
+    const id = priTarget.dataset.priority;
+    state.selectedProspectId = id;
+    const selected = getSelectedProspect();
+    if (selected) {
+      state.sequence = buildEmailSequence(state.campaign, selected);
+      state.whatsappSequence = buildWhatsappSequence(state.campaign, selected);
+    }
+    navigateTo(state.inbound.some((m) => m.prospectId === id) ? "inbox" : "prospects");
+    saveState();
+    return;
+  }
   if (event.target.closest("[data-checklist-dismiss]")) {
     state.ui = { ...(state.ui || {}), checklistDismissed: true };
     saveState();

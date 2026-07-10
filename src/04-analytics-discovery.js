@@ -187,8 +187,29 @@ function renderAnalyticsInsight(funnel) {
   if (bestMarket) parts.push(`回复率最高的市场：<strong>${escapeHtml(bestMarket.market)}</strong>（${bestMarket.rate}%，${bestMarket.replied}/${bestMarket.reached}）`);
   if (bestScript) parts.push(`最有效话术：<strong>${escapeHtml(bestScript.label)}</strong>（${bestScript.rate}%）`);
 
-  if (!parts.length && !dueN) {
-    elements.analyticsInsight.innerHTML = `<span class="insight-hint">先触达并积累回复数据，这里会告诉你哪个市场/话术成功率最高，以及该给谁发跟进。</span>`;
+  // 优先联系名单：按机会排序（已回复 > 已打开 > 高分），告诉你今天先追谁
+  const priority = priorityProspects(5);
+  const priorityHtml = priority.length
+    ? `
+      <div class="priority-list">
+        <p class="eyebrow">优先联系 · 按机会排序</p>
+        ${priority
+          .map(
+            (x, i) => `
+            <button class="priority-row" data-priority="${x.p.id}" type="button">
+              <span class="priority-rank">${i + 1}</span>
+              <span class="priority-name"><strong>${escapeHtml(x.p.company)}</strong><small>${escapeHtml(x.p.market)}</small></span>
+              <span class="priority-tags">${
+                x.replied ? `<span class="ptag hot">🔥 已回复</span>` : x.opened ? `<span class="ptag warm">👁 已打开</span>` : ""
+              }<span class="ptag">${x.lead.grade} · ${x.lead.probability}%</span></span>
+            </button>`
+          )
+          .join("")}
+      </div>`
+    : "";
+
+  if (!parts.length && !dueN && !priority.length) {
+    elements.analyticsInsight.innerHTML = `<span class="insight-hint">先触达并积累回复数据，这里会告诉你哪个市场/话术成功率最高、该优先追谁、以及给谁发跟进。</span>`;
     return;
   }
 
@@ -198,7 +219,26 @@ function renderAnalyticsInsight(funnel) {
   elements.analyticsInsight.innerHTML = `
     <div class="insight-text">💡 ${parts.join(" · ") || "已有触达数据"}${dueN ? ` · <strong>${dueN}</strong> 位客户到期未回复，该跟进了` : ""}</div>
     ${action}
+    ${priorityHtml}
   `;
+}
+
+// 优先联系名单：只保留有信号（回复/打开）或高分的客户，按机会分排序
+function priorityProspects(limit = 5) {
+  const inboundBy = new Set(state.inbound.map((m) => m.prospectId));
+  const openedBy = new Set(axOutbox().filter((o) => o.opened).map((o) => o.prospectId));
+  return state.prospects
+    .filter((p) => p.dealStage !== "成交" && p.status !== "已退订")
+    .map((p) => {
+      const lead = computeLeadScore(p);
+      const replied = axReplied(p) || inboundBy.has(p.id);
+      const opened = openedBy.has(p.id);
+      const score = lead.probability + (replied ? 200 : opened ? 60 : 0);
+      return { p, lead, replied, opened, score };
+    })
+    .filter((x) => x.replied || x.opened || x.lead.probability >= 60)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
 }
 
 function renderAnalyticsKpis(funnel) {

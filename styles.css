@@ -3445,12 +3445,23 @@ body.dark .backup-overdue {
 }
 .todo-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   margin-bottom: 6px;
 }
 .todo-head strong {
   font-size: 15px;
+}
+.todo-head-spacer {
+  flex: 1;
+}
+.todo-pull {
+  flex: none;
+  padding: 4px 10px;
+}
+.todo-pull svg {
+  width: 14px;
+  height: 14px;
 }
 .todo-count {
   font-size: 12px;

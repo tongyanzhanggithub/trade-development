@@ -1,4 +1,4 @@
-window.__APP_V = "d6dec20a";
+window.__APP_V = "1a194d22";
 
 const STORAGE_KEY = "foreign-trade-automation-v2";
 
@@ -4221,12 +4221,21 @@ function renderTodo() {
   if (unread) rows.push(["inbox", `${unread} 条新回复待处理`, `data-goto="inbox"`, "去收件箱"]);
   if (dueFollow) rows.push(["shuffle", `${dueFollow} 位客户到期未回复`, `data-todo="followup"`, "一键批量跟进"]);
 
+  // Webhook 模式且配了「拉取回复 Webhook」时，在标题栏放一个一键拉取（与 pullInboundReplies 的前置条件一致）
+  const canPull = state.settings.mode === "webhook" && !!(state.settings.inboundWebhook || "").trim();
+  const pullBtn = canPull
+    ? `<button class="ghost-button todo-pull" data-todo="pull" type="button"><svg><use href="#icon-download" /></svg><span>拉取新回复</span></button>`
+    : "";
+  const head = `<div class="todo-head"><strong>今日待办</strong>${rows.length ? `<span class="todo-count">${rows.length} 项</span>` : ""}<span class="todo-head-spacer"></span>${pullBtn}</div>`;
+
   if (!rows.length) {
-    host.innerHTML = `<div class="todo-empty">✅ 今日暂无待办。保持每天到收件箱点「拉取回复」，有新回信会自动出现在这里。</div>`;
+    host.innerHTML =
+      head +
+      `<div class="todo-empty">✅ 今日暂无待办。${canPull ? "点右上角「拉取新回复」看有没有新回信。" : "保持每天到收件箱点「拉取回复」，有新回信会自动出现在这里。"}</div>`;
     return;
   }
   host.innerHTML =
-    `<div class="todo-head"><strong>今日待办</strong><span class="todo-count">${rows.length} 项</span></div>` +
+    head +
     rows
       .map(
         ([icon, label, action, btn]) => `
@@ -7549,10 +7558,12 @@ document.addEventListener("click", (event) => {
     navigateTo(gotoTarget.dataset.goto);
     return;
   }
-  // 今日待办：一键批量跟进
+  // 今日待办：一键批量跟进 / 一键拉取回复
   const todoTarget = event.target.closest("[data-todo]");
   if (todoTarget) {
-    if (todoTarget.dataset.todo === "followup") queueDueFollowups();
+    const kind = todoTarget.dataset.todo;
+    if (kind === "followup") queueDueFollowups();
+    else if (kind === "pull") runAsyncButton(todoTarget, "拉取中…", () => pullInboundReplies());
     return;
   }
   // 优先联系名单：点一行 → 选中该客户并跳到对应视图（有回信去收件箱，否则去潜客详情）

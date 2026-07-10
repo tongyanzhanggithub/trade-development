@@ -1685,10 +1685,12 @@ document.addEventListener("click", (event) => {
     navigateTo(gotoTarget.dataset.goto);
     return;
   }
-  // 今日待办：一键批量跟进
+  // 今日待办：一键批量跟进 / 一键拉取回复
   const todoTarget = event.target.closest("[data-todo]");
   if (todoTarget) {
-    if (todoTarget.dataset.todo === "followup") queueDueFollowups();
+    const kind = todoTarget.dataset.todo;
+    if (kind === "followup") queueDueFollowups();
+    else if (kind === "pull") runAsyncButton(todoTarget, "拉取中…", () => pullInboundReplies());
     return;
   }
   // 优先联系名单：点一行 → 选中该客户并跳到对应视图（有回信去收件箱，否则去潜客详情）
